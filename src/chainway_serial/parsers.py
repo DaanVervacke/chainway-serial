@@ -17,6 +17,7 @@ from .const import (
     MIN_TAG_RECORD_SIZE,
     MIN_WORD_ADDRESS,
     NEGATIVE_TEMPERATURE_THRESHOLD,
+    PHASE_SIZE,
     POWER_RECORD_SIZE,
     READER_ADDRESS_LONG_SIZE,
     READER_ADDRESS_SIZE,
@@ -157,24 +158,29 @@ def parse_tag_record(
     *,
     with_antenna: bool,
     received_at: datetime,
+    with_phase: bool = False,
 ) -> Tag:
     """Parse one tag record of a 0x83, 0x81 or batch response.
 
     The blocks follow the SDK parsers exactly. With a TID block
     present, USER data fills the space between the TID and the
-    trailing RSSI pair, and more than three bytes after the TID mark
+    trailing block, and more than three bytes after the TID mark
     the USER block as present, a margin the SDKs hardcode. Without a
-    TID block the RSSI pair and the antenna byte sit directly after
-    the EPC.
+    TID block the trailing block sits directly after the EPC. With
+    ``with_phase`` the trailing block starts with a 2-byte phase in
+    degrees, a layout the official protocol document defines for the
+    phase reporting inventory mode.
 
     Args:
         record: The raw record bytes: PC, then EPC, then the optional
-            TID and USER blocks, then the RSSI pair and the optional
-            antenna byte.
+            TID and USER blocks, then the optional phase, the RSSI
+            pair and the optional antenna byte.
         with_antenna: Whether the record ends with one antenna byte
             after the RSSI pair. Inventory records carry it, collected
             tag records do not.
         received_at: Reception timestamp stored on the tag.
+        with_phase: Whether the record carries a 2-byte phase in
+            degrees between the body and the RSSI pair.
 
     Raises:
         ChainwayResponseError: The record is too short or carries no
@@ -186,31 +192,32 @@ def parse_tag_record(
         len(record) >= epc_length,
         f"tag record needs {epc_length} bytes of PC and EPC, got {len(record)}",
     )
+    phase_offset = PHASE_SIZE if with_phase else 0
     trailing = 3 if with_antenna else 2
+    phase: int | None = None
     rssi_bytes: bytes | None = None
     antenna: int | None = None
     tid: bytes | None = None
     user_data: bytes | None = None
     if len(record) >= epc_length + TID_SIZE:
         tid = record[epc_length : epc_length + TID_SIZE]
+        tail_start = epc_length + TID_SIZE
         if len(record) - USER_BLOCK_MARGIN > epc_length + TID_SIZE:
-            body_end = len(record) - trailing
-            user_data = record[epc_length + TID_SIZE : body_end]
-            rssi_bytes = record[body_end : body_end + 2]
-            if len(record) >= body_end + 3:
-                antenna = record[body_end + 2]
-        else:
-            rssi_end = epc_length + TID_SIZE + 2
-            if len(record) >= rssi_end:
-                rssi_bytes = record[epc_length + TID_SIZE : rssi_end]
-                if len(record) >= rssi_end + 1:
-                    antenna = record[rssi_end]
+            tail_start = len(record) - trailing - phase_offset
+            user_data = record[epc_length + TID_SIZE : tail_start]
     else:
-        rssi_end = epc_length + 2
-        if len(record) >= rssi_end:
-            rssi_bytes = record[epc_length:rssi_end]
-            if len(record) >= rssi_end + 1:
-                antenna = record[rssi_end]
+        tail_start = epc_length
+    rssi_start = tail_start + phase_offset
+    if len(record) >= tail_start + PHASE_SIZE + 2:
+        if with_phase:
+            phase = record[tail_start] << 8 | record[tail_start + 1]
+        rssi_bytes = record[rssi_start : rssi_start + 2]
+        if len(record) >= rssi_start + 3:
+            antenna = record[rssi_start + 2]
+    elif len(record) >= tail_start + phase_offset + 2:
+        rssi_bytes = record[rssi_start : rssi_start + 2]
+        if len(record) >= rssi_start + 3:
+            antenna = record[rssi_start + 2]
     rssi: float | None = None
     if rssi_bytes is not None:
         span = WORD_MAX - (rssi_bytes[0] << 8 | rssi_bytes[1])
@@ -224,6 +231,7 @@ def parse_tag_record(
         rssi=rssi,
         antenna=antenna,
         received_at=received_at,
+        phase=phase,
     )
 
 

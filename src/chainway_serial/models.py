@@ -172,6 +172,7 @@ class Tag:
     rssi: float | None
     antenna: int | None
     received_at: datetime
+    phase: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

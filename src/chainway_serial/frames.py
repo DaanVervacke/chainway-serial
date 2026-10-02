@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .const import (
     FRAME_HEADER,
+    FRAME_HEADERS,
     FRAME_OVERHEAD,
     FRAME_TAIL,
     MAX_FRAME_LENGTH,
@@ -54,8 +55,8 @@ def parse_frame(frame: bytes) -> tuple[int, bytes]:
     if not MIN_FRAME_LENGTH <= len(frame) <= MAX_FRAME_LENGTH:
         msg = f"frame length {len(frame)} falls outside 8 to 2048"
         raise ChainwayProtocolError(msg)
-    if frame[:2] != FRAME_HEADER:
-        msg = "frame does not start with the A5 5A header"
+    if frame[:2] not in FRAME_HEADERS:
+        msg = "frame does not start with a valid A5 5A or C8 8C header"
         raise ChainwayProtocolError(msg)
     if frame[-2:] != FRAME_TAIL:
         msg = "frame does not end with the 0D 0A tail"

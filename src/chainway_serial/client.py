@@ -31,6 +31,7 @@ from .const import (
     MIN_POWER_DBM,
     SINGLE_INVENTORY_PAYLOAD,
     START_INVENTORY_PAYLOAD,
+    START_INVENTORY_PHASE_PAYLOAD,
     UPDATE_BLOCK_SIZE,
     WORD_MAX,
     Command,
@@ -193,6 +194,7 @@ class ChainwayClient:
         self._lifecycle_lock = asyncio.Lock()
         self._pending: tuple[int, asyncio.Future[bytes]] | None = None
         self._inventory_active = False
+        self._inventory_phase = False
         self._tag_queue: asyncio.Queue[Tag | _LinkClosed] | None = None
         self._maintenance_task: asyncio.Task[None] | None = None
         self._callback_tasks: set[asyncio.Task[None]] = set()
@@ -573,12 +575,19 @@ class ChainwayClient:
             return None
         return parse_tag_record(payload, with_antenna=True, received_at=now_utc())
 
-    async def start_inventory(self) -> None:
+    async def start_inventory(self, *, phase: bool = False) -> None:
         """Start a continuous inventory.
 
         The reader sends no acknowledgement, this method waits the
         documented start delay and returns. A no-op when an inventory
         is already running.
+
+        Args:
+            phase: Report the tag phase in degrees in every sighting,
+                the official document's phase reporting mode. The
+                layout with TID or USER blocks enabled is inferred
+                from the documented shape, verify against live
+                traffic.
         """
         await self._ensure_connected()
         if self._inventory_active:
@@ -589,7 +598,9 @@ class ChainwayClient:
                 msg = "the link is closed"
                 raise ChainwayConnectionError(msg)
             self._tag_queue = asyncio.Queue()
-            transport.write(build_frame(Command.START_INVENTORY, START_INVENTORY_PAYLOAD))
+            payload = START_INVENTORY_PHASE_PAYLOAD if phase else START_INVENTORY_PAYLOAD
+            transport.write(build_frame(Command.START_INVENTORY, payload))
+            self._inventory_phase = phase
             self._inventory_active = True
             await asyncio.sleep(INVENTORY_START_DELAY)
 
@@ -605,7 +616,7 @@ class ChainwayClient:
         if queue is not None:
             queue.put_nowait(_LinkClosed(None))
 
-    async def inventory(self) -> AsyncGenerator[Tag]:
+    async def inventory(self, *, phase: bool = False) -> AsyncGenerator[Tag]:
         """Yield tag sightings from a continuous inventory run.
 
         Starts the scan on first iteration and stops it on exit. Close
@@ -613,10 +624,13 @@ class ChainwayClient:
         early, otherwise the stop frame is only sent once the generator
         is collected.
 
+        Args:
+            phase: Report the tag phase in degrees in every sighting.
+
         Raises:
             ChainwayConnectionError: The link dropped mid-scan.
         """
-        await self.start_inventory()
+        await self.start_inventory(phase=phase)
         try:
             while True:
                 queue = self._tag_queue
@@ -1113,7 +1127,12 @@ class ChainwayClient:
 
     def _deliver_tag(self, payload: bytes) -> None:
         try:
-            tag = parse_tag_record(payload, with_antenna=True, received_at=now_utc())
+            tag = parse_tag_record(
+                payload,
+                with_antenna=True,
+                received_at=now_utc(),
+                with_phase=self._inventory_phase,
+            )
         except ChainwayResponseError as err:
             _LOGGER.debug("dropping malformed tag record: %s", err)
             return
@@ -1159,6 +1178,7 @@ class ChainwayClient:
 
     def _finish_inventory(self) -> None:
         self._inventory_active = False
+        self._inventory_phase = False
 
     async def _teardown(self) -> None:
         current = asyncio.current_task()

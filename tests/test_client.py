@@ -406,6 +406,22 @@ async def test_stop_inventory_is_a_noop_when_idle(
     assert Command.STOP_INVENTORY not in commands_seen(logic)
 
 
+async def test_inventory_phase_mode_reports_the_phase(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    record = b"\x34\x00" + bytes.fromhex("e2c45566a5030060705db2c7") + b"\x00\x3b\xfe\xc8\x01"
+    logic.tags_to_stream = [record]
+    tags = []
+    async with aclosing(client.inventory(phase=True)) as stream:
+        async for tag in stream:
+            tags.append(tag)
+            break
+    assert tags[0].phase == 59
+    starts = [payload for command, payload in logic.received if command == Command.START_INVENTORY]
+    assert starts[-1] == b"\xff\xff"
+
+
 async def test_malformed_tag_record_is_dropped_and_the_stream_survives(
     client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
 ) -> None:

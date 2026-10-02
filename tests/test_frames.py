@@ -109,3 +109,10 @@ def test_payload_with_tail_bytes_roundtrips() -> None:
     command, parsed = parse_frame(build_frame(0x83, payload))
     assert command == 0x83
     assert parsed == payload
+
+
+def test_parse_accepts_the_alternate_header() -> None:
+    frame = bytearray(build_frame(0x02))
+    frame[0] = 0xC8
+    frame[1] = 0x8C
+    assert parse_frame(bytes(frame)) == (0x02, b"")

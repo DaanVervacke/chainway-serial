@@ -100,3 +100,31 @@ def test_connection_lost_forwards_to_the_callback() -> None:
     sample = OSError("gone")
     protocol.connection_lost(sample)
     assert lost == [sample]
+
+
+def test_alternate_header_frame_is_delivered() -> None:
+    protocol, frames = make_protocol()
+    frame = bytearray(build_frame(0x02, b"\x09"))
+    frame[0] = 0xC8
+    frame[1] = 0x8C
+    protocol.data_received(bytes(frame))
+    assert frames == [(0x02, b"\x09")]
+
+
+def test_mixed_headers_are_both_parsed() -> None:
+    protocol, frames = make_protocol()
+    alt = bytearray(build_frame(0x02))
+    alt[0] = 0xC8
+    alt[1] = 0x8C
+    protocol.data_received(bytes(alt) + build_frame(0x34))
+    assert [command for command, _ in frames] == [0x02, 0x34]
+
+
+def test_lone_alternate_header_byte_is_retained() -> None:
+    protocol, frames = make_protocol()
+    alt = bytearray(build_frame(0x02))
+    alt[0] = 0xC8
+    alt[1] = 0x8C
+    protocol.data_received(b"\xc8")
+    protocol.data_received(bytes(alt)[1:])
+    assert frames == [(0x02, b"")]

@@ -240,6 +240,49 @@ def test_lock_code_rejects_an_empty_bank_selection() -> None:
         build_lock_code([], LockMode.LOCK)
 
 
+def test_parse_tag_record_phase_mode_epc_only() -> None:
+    record = b"\x34\x00" + bytes.fromhex("e2c45566a5030060705db2c7") + b"\x00\x3b\xfe\xc8\x01"
+    tag = parse_tag_record(record, with_antenna=True, received_at=RECEIVED_AT, with_phase=True)
+    assert tag.epc == bytes.fromhex("e2c45566a5030060705db2c7")
+    assert tag.phase == 59
+    assert tag.rssi == -31.1
+    assert tag.antenna == 1
+
+
+def test_parse_tag_record_phase_mode_without_antenna() -> None:
+    record = b"\x34\x00" + bytes.fromhex("e2c45566a5030060705db2c7") + b"\x00\x3b\xfe\xc8"
+    tag = parse_tag_record(record, with_antenna=False, received_at=RECEIVED_AT, with_phase=True)
+    assert tag.phase == 59
+    assert tag.rssi == -31.1
+    assert tag.antenna is None
+
+
+def test_parse_tag_record_phase_mode_with_tid_and_user() -> None:
+    record = (
+        b"\x30\x00"
+        + bytes(range(1, 13))
+        + bytes(range(13, 25))
+        + b"\xaa\xbb"
+        + b"\x00\x3b"
+        + b"\xfe\xd6"
+        + b"\x00"
+    )
+    tag = parse_tag_record(record, with_antenna=True, received_at=RECEIVED_AT, with_phase=True)
+    assert tag.tid == bytes(range(13, 25))
+    assert tag.user_data == b"\xaa\xbb"
+    assert tag.phase == 59
+    assert tag.rssi == -29.7
+    assert tag.antenna == 0
+
+
+def test_parse_tag_record_phase_absent_without_the_mode() -> None:
+    record = b"\x34\x00" + bytes.fromhex("e2c45566a5030060705db2c7") + b"\x00\x3b\xfe\xc8\x01"
+    tag = parse_tag_record(record, with_antenna=True, received_at=RECEIVED_AT)
+    assert tag.phase is None
+    assert tag.rssi is None
+    assert tag.antenna == 0xFE
+
+
 def test_parse_flash_tags() -> None:
     payload = b"\x02\x06\x11\x22\x33\x44\x55\x66\x04\xaa\xbb\xcc\xdd"
     assert parse_flash_tags(payload) == (b"\x11\x22\x33\x44\x55\x66", b"\xaa\xbb\xcc\xdd")

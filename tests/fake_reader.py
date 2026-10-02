@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Callable
 
 from chainway_serial.const import (
-    FRAME_HEADER,
+    FRAME_HEADERS,
     MAX_FRAME_LENGTH,
     MIN_FRAME_LENGTH,
     Command,
@@ -152,10 +152,15 @@ class FakeReaderLogic:
 
     def _extract_frame(self) -> tuple[int, bytes] | None:
         while True:
-            index = self._buffer.find(FRAME_HEADER)
-            if index < 0:
+            positions = [
+                position
+                for position in (self._buffer.find(header) for header in FRAME_HEADERS)
+                if position >= 0
+            ]
+            if not positions:
                 self._buffer.clear()
                 return None
+            index = min(positions)
             if index > 0:
                 del self._buffer[:index]
                 continue

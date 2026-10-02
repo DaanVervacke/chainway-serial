@@ -10,7 +10,12 @@ from typing import cast
 
 from serialx import BaseSerialTransport
 
-from .const import FRAME_HEADER, FRAME_PREFIX_SIZE, MAX_FRAME_LENGTH, MIN_FRAME_LENGTH
+from .const import (
+    FRAME_HEADERS,
+    FRAME_PREFIX_SIZE,
+    MAX_FRAME_LENGTH,
+    MIN_FRAME_LENGTH,
+)
 from .exceptions import ChainwayProtocolError
 from .frames import parse_frame
 
@@ -20,14 +25,22 @@ FrameHandler = Callable[[int, bytes], None]
 ConnectionLostHandler = Callable[[Exception | None], None]
 
 
+def _earliest_header(buffer: bytearray) -> int:
+    """Return the index of the earliest frame header in ``buffer``."""
+    positions = [
+        position for position in (buffer.find(header) for header in FRAME_HEADERS) if position >= 0
+    ]
+    return min(positions) if positions else -1
+
+
 class ChainwayProtocol(asyncio.Protocol):
     """Buffer inbound bytes and hand complete frames to a callback.
 
-    The state machine hunts the A5 5A header, validates the 8 to 2048
-    length window, verifies the XOR checksum and the 0D 0A tail, and
-    resynchronizes on the next header after any violation. Stray bytes
-    such as the bare inventory keepalive byte are discarded without
-    error.
+    The state machine hunts the A5 5A and the C8 8C headers, both
+    officially valid, validates the 8 to 2048 length window, verifies
+    the XOR checksum and the 0D 0A tail, and resynchronizes on the
+    next header after any violation. Stray bytes such as the bare
+    inventory keepalive byte are discarded without error.
     """
 
     def __init__(
@@ -70,9 +83,9 @@ class ChainwayProtocol(asyncio.Protocol):
         Returns whether progress was made, a frame extracted or garbage
         dropped, so the caller can loop until the buffer needs more data.
         """
-        header_index = self._buffer.find(FRAME_HEADER)
+        header_index = _earliest_header(self._buffer)
         if header_index < 0:
-            if self._buffer and self._buffer[-1] == FRAME_HEADER[0]:
+            if self._buffer and self._buffer[-1] in b"\xa5\xc8":
                 del self._buffer[:-1]
             else:
                 self._buffer.clear()
