@@ -635,9 +635,9 @@ class ChainwayClient:
                 traffic.
         """
         await self._ensure_connected()
-        if self._inventory_active:
-            return
         async with self._lock:
+            if self._inventory_active:
+                return
             transport = self._transport
             if transport is None:
                 msg = "the link is closed"
