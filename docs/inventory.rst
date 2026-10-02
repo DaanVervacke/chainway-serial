@@ -32,6 +32,21 @@ Or drive the scan manually:
    await client.start_inventory()
    await client.stop_inventory()
 
+Phase reporting
+---------------
+
+The official protocol document defines a phase reporting mode: pass
+``phase=True`` and every sighting carries a phase in degrees, 0 to 360.
+
+.. code-block:: python
+
+   async for tag in client.inventory(phase=True):
+       print(tag.epc.hex(), tag.phase, tag.rssi)
+
+The documented record shape carries the phase after the EPC. With TID
+or USER blocks enabled the position is inferred from that shape, so
+verify against live traffic before relying on it.
+
 Single inventory
 ----------------
 

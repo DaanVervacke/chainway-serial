@@ -6,7 +6,9 @@ Sources:
 
 - Android `DeviceAPI_ver20250209_release.aar`, decompiled with jadx. Frame builder and command set: `com/rscja/team/qcom/deviceapi/Q.java` and `T.java`. Receive state machine: `com/rscja/team/qcom/e/b.java`. Tag record parser: `com/rscja/deviceapi/b.java`.
 - Java `ReaderAPI20240822.jar`, decompiled with jadx. Frame builder: `com/rscja/deviceapi/i.java`, UR4 overrides in `j.java`. Tag record parser and batch format: `com/rscja/deviceapi/b.java`. Hardcoded ready-made frames: `com/rscja/deviceapi/d.java`.
-- Windows `UHFAPI.dll` interface document `RFID_API_DLL_V1.0.1.doc`, converted to text. Command semantics, parameter units and value ranges.
+- Windows `UHFAPI.dll` interface document `RFID_API_DLL_V1.0.1.doc`, converted to text. Command semantics, parameter units and value ranges. The C header `UHFAPI.h` and import library ship in the same archive.
+- `libTagReader.so`, the Linux native counterpart of the DLL, extracted from the Java archive with debug symbols intact. Its frame builder and receiver independently confirm the wire format, and the receiver also accepts the `C8 8C` header and a 4096 byte length window.
+- `UHF_Application_Protocol_V2.1.2.pdf`, the vendor's official wire protocol document for the UHF module, tracked at the repository root. It confirms the frame format and the module-level command subset, and documents the phase reporting inventory mode.
 - Java and C# demo applications shipped in the three RAR archives at the repository root.
 
 Where the Android AAR and the Java jar disagree on a payload byte, the Windows DLL document usually explains it: the byte is a save flag, 0 for settings that survive until power off and 1 for settings stored persistently. The AAR tends to send 0, the jar tends to send 1. Both are valid wire encodings.
@@ -25,13 +27,15 @@ The frame format and command set are identical on TCP and RS-232. Both pure-Java
 
 ```
 Offset  Size  Field
-0       2     Header: A5 5A
+0       2     Header: A5 5A or C8 8C, both officially valid
 2       2     Length: total frame size in bytes (payload + 8), big-endian, valid 8 to 2048
 4       1     Command
 5       N     Payload, N = Length - 8
 5+N     1     Checksum: XOR of bytes at offsets 2 through 4+N (length bytes, command, payload)
 6+N     2     Tail: 0D 0A
 ```
+
+The official protocol document lists `C8 8C` as equally valid next to `A5 5A`, and the vendor's native receiver hunts both. This library sends `A5 5A`, like the Android SDK and the Windows DLL, and its parser accepts both. Which header the UR4 answers with is **unverified**. The Java SDKs reject frames above 2048 bytes, the native library accepts up to 4096, so the window is **unverified** at the top end.
 
 Worked examples:
 
@@ -146,7 +150,7 @@ Semantics from the DLL document: target 0 to 4 for S0 to S3 and SL, action 0 to 
 | 0x72 | `00 00` | 0x73, payload `01 mode userAddr userLen` | Get inventory mode |
 | 0x6E | `save bank ptrHi ptrLo cntHi cntLo data...` | 0x6F, payload `01` | Set tag filter. Bank 1 = EPC, 2 = TID, 3 = USER. `ptr` is the bit offset of the match, `cnt` the match length in bits, `data` the match bytes, ceil(cnt / 8) of them. A zero bit length clears the filter and carries no data bytes, 6 payload bytes total |
 | 0x80 | `00 64` | 0x81, one tag record | Single inventory. Returns at most one tag record in the response. Payload bytes are parameters, semantics **unverified** |
-| 0x82 | `00 00` | none, stream begins | Start continuous inventory. Tag sightings arrive as 0x83 frames |
+| 0x82 | `Num1 Num0` | none, stream begins | Start continuous inventory. The official protocol document defines the two payload bytes: `00 00` for a normal scan, `FF FF` for phase reporting, where every 0x83 record carries a 2-byte phase in degrees between the EPC and the RSSI pair. The SDKs always send `00 00`. A third-party Node client sends `27 10`, meaning **unverified** |
 | 0x8C | empty | 0x8D, payload `01` | Stop continuous inventory |
 | 0x83 | reader to host only | n/a | One tag sighting per frame, pushed while inventory runs |
 
@@ -282,6 +286,26 @@ The shared SDK code bases carry commands for other Chainway products. They are d
 |---|---|---|---|
 | 0xE5 | `04 mode` | 0xE6, payload `01` | R6 work mode |
 
+## Module-level protocol deltas
+
+The official protocol document V2.1.2 describes the UHF module protocol, one layer below the reader protocol this library implements. The frame format and the tag operation commands are shared. The deltas:
+
+- The document's examples all use the `C8 8C` header.
+- At module level 0x68 is the soft reset and 0x74 the factory reset, while the reader protocol uses 0x74 for the soft reset.
+- Tag operation error responses carry an error flag after the success flag: 0x01 means the operation failed and 0x22 means the tag could not be recognized.
+- Commands 0xA1 through 0xFF are reserved at module level. The reader protocol uses them: the 0xA1 configuration family, the 0xE4 peripherals and the 0xE0 collected tag pull exist only at reader level.
+
+## Third-party implementations
+
+Independent implementations that corroborate the frame format against live hardware:
+
+- jlujan2016/ur4_test_gpio, Rust: relay control, quotes the official software's 0xA1 sub 09 frames `A5 5A 00 0C A1 09 00 00 01 A5 0D 0A` and `... 09 00 00 00 A4 0D 0A`, matching the library's GPO layout.
+- ready2tag/chainway-rfid, npm: UR4 over TCP, start inventory `A5 5A 00 0A 82 27 10 BF 0D 0A` and the stop frame with the `C8 8C` header.
+- 01Hash10/chainway-ur4-rs232-usb, Python: single and continuous inventory over RS-232 with `C8 8C` frames, and the host of the official protocol document.
+- jlujan2016/simulador_UR4_chainway, Rust: a reader simulator speaking the tag frame layout.
+
+A cluster of Node and Tauri applications by the same author carries a second, conflicting command table, 0x87 version, 0x89 inventory, 0x93 power, on the same framing. No source explains its origin and no captured responses exist, so it is not treated as protocol evidence.
+
 ## Tag record
 
 The payload of a 0x83 frame, and the response of a single inventory (0x81), is one tag record:
@@ -294,8 +318,9 @@ PC(2) | EPC(...) | TID(12, optional) | USER(..., optional) | RSSI(2) | ANT(1)
 - TID is present as a fixed 12-byte block when the inventory mode includes TID
 - USER data follows TID when the mode includes it. The SDKs treat more than 3 bytes after the TID block as the marker for a present USER block
 - Without a TID block the RSSI pair and the antenna byte sit directly after the EPC, the SDKs have no short TID block
-- RSSI: 16-bit big-endian. dBm = (raw - 65535) / 10, so raw 0xFED6 = -29.7 dBm. The SDKs treat values where 65535 - raw >= 2000 as invalid
+- RSSI: 16-bit big-endian. dBm = (raw - 65535) / 10 in the SDK reading, so raw 0xFED6 = -29.7 dBm, and the official document words the same arithmetic as two's complement, which differs by 0.1 dBm. The SDKs treat values where 65535 - raw >= 2000 as invalid
 - ANT: 1-byte antenna index, 0-based
+- Phase: in phase reporting mode, started with the `FF FF` payload, a 2-byte big-endian phase in degrees, 0 to 360, sits between the body and the RSSI pair. The documented shape carries it after the EPC, the position with TID or USER blocks present is inferred. **Unverified**
 
 The parser infers which optional blocks are present from the total record length, since the inventory mode is known by context.
 
@@ -338,7 +363,7 @@ Set with 0xA1 sub 05.
 - Whether the reader enforces the heartbeat or keepalive intervals, or whether they are purely client-side library behavior
 - Whether a 0x83 frame can carry more than one record. Both pure-Java SDKs parse exactly one record per frame, and the 0xE0 batch exists for the multi-record case
 - First byte of the 0x4F antenna state response
-- Error payload values beyond `01` and `01 00`, no SDK decodes them
+- Error payload values beyond `01`, `01 00` and the documented 0x22 tag-unrecognized flag, no SDK decodes them
 - The meaning of the leading `02` in the 0x10 set power payload and the leading `00` in the 0x52 RF link payload
 - The 0x4A work time save flag reading, inferred from the AAR and jar disagreement
 - The 0xE2 request tail
@@ -346,6 +371,10 @@ Set with 0xA1 sub 05.
 - Antenna work time unit, the idle sleep time unit, and the inventory modes 3, 10, 14 and 15 from the parser constants
 - Whether the volume set response is a bare `01` or echoes the subcommand, the only parser and the family convention disagree
 - Whether the flash storage commands 0xE9 and 0xEB apply to the UR4
+- Which header the reader answers with, `A5 5A` or `C8 8C`
+- The 4096 versus 2048 length window: the Java SDKs cap at 2048, the native library at 4096
+- The phase reporting record layout with TID or USER blocks present, inferred from the documented EPC-only shape
+- The `27 10` start inventory payload seen in a third-party client
 - RS-485 variants, if the specific unit has one: half-duplex direction control is outside the protocol
 
 ## Decompiled source locations
@@ -353,6 +382,7 @@ Set with 0xA1 sub 05.
 The extracted archives and decompiled trees live in a temporary workspace. Re-extract from the three RAR files at the repository root when needed:
 
 - Android AAR: obfuscated class names, `Q.java` and `T.java` hold the command builders, `com/rscja/deviceapi/b.java` the tag record, batch and lock code logic
-- Java jar: readable names, `i.java` and `j.java` hold the frame and command logic, `h.java` and `d.java` the record and hardcoded frames
-- `api_doc.txt` inside the Windows demo: converted DLL reference with command semantics and units
+- Java jar: readable names, `i.java` and `j.java` hold the frame and command logic, `h.java` and `d.java` the record and hardcoded frames. The nested `app/v1.1_20240823.rar` inside `Demo_Java_UR4_UR1A.rar` holds `libTagReader.so`, the native Linux library with debug symbols
+- `api_doc.txt` inside the Windows demo: converted DLL reference with command semantics and units, `UHFAPI.h` in the same archive holds the C signatures
+- `UHF_Application_Protocol_V2.1.2.pdf` at the repository root: the vendor's official module protocol document
 - C# demo with the full P/Invoke surface in `UHFAPI.cs`
