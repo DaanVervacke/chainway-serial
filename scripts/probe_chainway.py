@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 from chainway_serial import ChainwayClient, InventoryMode, discover_readers
@@ -45,19 +46,19 @@ async def probe_reader(client: ChainwayClient) -> dict[str, object]:
     results["return_loss"] = [
         {"port": loss.port, "loss_db": loss.loss_db} for loss in await client.get_return_loss()
     ]
-    results["gen2"] = (await client.get_gen2_parameters()).__dict__
+    results["gen2"] = asdict(await client.get_gen2_parameters())
     results["rf_link"] = (await client.get_rf_link()).name
     results["fast_id"] = await client.get_fast_id()
     results["tag_focus"] = await client.get_tag_focus()
-    results["inventory_mode"] = (await client.get_inventory_mode()).__dict__
+    results["inventory_mode"] = asdict(await client.get_inventory_mode())
     results["antenna_mask"] = await client.get_antenna_mask()
     results["work_mode"] = (await client.get_work_mode()).name
     results["buzzer"] = await client.get_buzzer()
-    results["gpo"] = (await client.get_gpo()).__dict__
-    results["trigger_config"] = (await client.get_trigger_config()).__dict__
+    results["gpo"] = asdict(await client.get_gpo())
+    results["trigger_config"] = asdict(await client.get_trigger_config())
     results["volume"] = await client.get_volume()
-    results["reader_address"] = (await client.get_reader_address()).__dict__
-    results["destination_address"] = (await client.get_destination_address()).__dict__
+    results["reader_address"] = asdict(await client.get_reader_address())
+    results["destination_address"] = asdict(await client.get_destination_address())
     results["collected_count"] = await client.get_collected_tag_count()
     barcode = await client.scan_barcode()
     results["barcode"] = barcode.hex() if barcode else None
@@ -68,23 +69,14 @@ async def probe_inventory(client: ChainwayClient, seconds: float) -> list[dict[s
     """Run a timed inventory and collect the tag sightings."""
     tags: list[dict[str, object]] = []
 
-    def on_tag(tag: Tag) -> None:
-        tags.append(serialize_tag(tag))
+    async def collect() -> None:
+        tags.extend([serialize_tag(tag) async for tag in client.inventory()])
 
-    scanning = ChainwayClient(
-        client.url,
-        keepalive_interval=client.keepalive_interval,
-        dead_link_timeout=client.dead_link_timeout,
-        on_tag=on_tag,
-    )
-    await scanning.connect()
-    try:
-        await scanning.set_inventory_mode(InventoryMode.EPC_TID_USER, save=False)
-        await scanning.start_inventory()
-        await asyncio.sleep(seconds)
-        await scanning.stop_inventory()
-    finally:
-        await scanning.disconnect()
+    await client.set_inventory_mode(InventoryMode.EPC_TID_USER, save=False)
+    collector = asyncio.create_task(collect())
+    await asyncio.sleep(seconds)
+    await client.stop_inventory()
+    await collector
     return tags
 
 
