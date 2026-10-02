@@ -69,8 +69,7 @@ Receiver state machine, as implemented by the SDKs: hunt for `A5`, expect `5A`, 
 
 Client-side policy from the SDK connection managers. Whether the reader enforces any of this is **unverified**.
 
-- Idle connection: send a get-version frame every 5 seconds. 20 seconds without any inbound data marks the connection dead and triggers a disconnect.
-- During inventory: send a single `00` byte every 5 seconds. No response is expected. This bare byte is not a valid frame, the parser must tolerate it.
+The Android SDK connection managers send a heartbeat only after 5 seconds of inbound silence, at most every 3 seconds, and suspend the dead-link check while an inventory runs. Idle they send a get-version frame, during inventory a single `00` byte, and 20 seconds of inbound silence on an idle link marks it dead. The Java jar sends get-version every 2 seconds, uses a 10 second dead link, and never drops the link during inventory. This library implements a fixed `keepalive_interval` of 5 seconds, the 20 second Android dead-link value, and suspends the dead-link check while an inventory runs. All three intervals are client parameters. The bare `00` byte is not a valid frame, the parser must tolerate it.
 
 ## Command reference
 
@@ -102,7 +101,7 @@ Power values on the wire are centi-dBm, big-endian, so 30 dBm = 0x0BB8.
 | 0x2C | `save region` | 0x2D, payload `01` | Set frequency region. `save` 0 or 1. Region: 0x01 China1, 0x02 China2, 0x04 Europe, 0x08 USA, 0x16 Korea, 0x32 Japan |
 | 0x2E | empty | 0x2F, payload `01 region` | Get frequency region |
 | 0x24 | `on` | 0x25, payload `01` | Set continuous carrier wave, 0 off, 1 on |
-| 0x26 | empty | 0x27, payload `01 on` | Get continuous carrier wave state |
+| 0x26 | empty | 0x27, payload `on` | Get continuous carrier wave state. Both SDKs read payload byte 0 as the state and do not check the length, so the response length is **unverified** |
 | 0x20 | 4 bytes, see below | 0x21, payload `01` | Set Gen2 parameters |
 | 0x22 | empty | 0x23, payload 4 bytes | Get Gen2 parameters, same packing as the request |
 | 0x52 | `00 save mode` | 0x53, payload `01` | Set recommended RF link combination. Mode: 0 DSB_ASK/FM0/40kHz, 1 PR_ASK/Miller4/250kHz, 2 PR_ASK/Miller4/300kHz, 3 DSB_ASK/FM0/400kHz. Leading `00` constant, meaning **unverified** |
@@ -135,7 +134,7 @@ Semantics from the DLL document: target 0 to 4 for S0 to S3 and SL, action 0 to 
 |---|---|---|---|
 | 0x28 | `save maskHi maskLo` | 0x29, payload `01` | Set antenna enable mask, 16 bits, high byte first, bit 0 = ANT1 through bit 15 = ANT16 |
 | 0x2A | empty | 0x2B, payload 2 bytes | Get antenna enable mask |
-| 0x4A | `setHi ant hi lo` or `ant hi lo` | 0x4B, payload `01` | Set antenna work time. The AAR sends `0x10 | ant`, the jar sends `ant`, so the high nibble is read as the save flag. Unit **unverified** |
+| 0x4A | `setHi ant hi lo` or `ant hi lo` | 0x4B, payload `01` | Set antenna work time. The AAR sends `0x10 | ant`, the jar sends `ant`, so the high nibble is read as the save flag. Unit **unverified**. Antenna 16 collides with the save bit, the byte is the same either way |
 | 0x4C | `ant 00` | 0x4D, payload `01 ant hi lo` | Get antenna work time, 16-bit big-endian |
 
 ### Inventory control
@@ -145,7 +144,7 @@ Semantics from the DLL document: target 0 to 4 for S0 to S3 and SL, action 0 to 
 | 0x70 | `save mode userAddr userLen` | 0x71, payload `01` | Select inventory mode. Mode 0 = EPC only, mode 1 = EPC and TID, mode 2 = EPC, TID and USER. `userAddr` is the USER start address in 16-bit words, `userLen` the USER read length in words. TID is a fixed 12 bytes when present. The parser source also knows mode 10 = EPC and RESERVED, 14 = LED tag and 15 = temperature tag, support on UR4 **unverified** |
 | 0x70 | `00 00 00 00` | 0x71, payload `01` | Shorthand for mode 0 without saving |
 | 0x72 | `00 00` | 0x73, payload `01 mode userAddr userLen` | Get inventory mode |
-| 0x6E | `save bank ptrHi ptrLo cntHi cntLo data...` | 0x6F, payload `01` | Set tag filter. Bank 1 = EPC, 2 = TID, 3 = USER. `ptr` is the bit offset of the match, `cnt` the match length in bits, `data` the match bytes, ceil(cnt / 8) of them |
+| 0x6E | `save bank ptrHi ptrLo cntHi cntLo data...` | 0x6F, payload `01` | Set tag filter. Bank 1 = EPC, 2 = TID, 3 = USER. `ptr` is the bit offset of the match, `cnt` the match length in bits, `data` the match bytes, ceil(cnt / 8) of them. A zero bit length clears the filter and carries no data bytes, 6 payload bytes total |
 | 0x80 | `00 64` | 0x81, one tag record | Single inventory. Returns at most one tag record in the response. Payload bytes are parameters, semantics **unverified** |
 | 0x82 | `00 00` | none, stream begins | Start continuous inventory. Tag sightings arrive as 0x83 frames |
 | 0x8C | empty | 0x8D, payload `01` | Stop continuous inventory |
@@ -201,11 +200,11 @@ Values are hex bit positions. The generator ORs one column per selected bank, th
 | Command | Request payload | Response | Meaning |
 |---|---|---|---|
 | 0xE0 | empty | 0xE1, see batch format | Pull tags collected in auto and trigger work mode, EPC records only |
-| 0xE2 | `01 ...` | 0xE3, see batch format | Variant with full tag records, request tail and leading response byte **unverified** |
+| 0xE2 | `01 ...` | 0xE3, see batch format | Variant with full tag records. The response carries one extra byte before the index pair, the request tail is **unverified** |
 | 0xE9 | `FF` | 0xEA, payload `00 00` | Delete all collected tags from flash |
 | 0xE9 | `00` | 0xEA, payload `cntHi cntLo` | Get count of all collected tags |
 | 0xE9 | `01` | 0xEA, payload `cntHi cntLo` | Get count of new collected tags |
-| 0xEB | `FF` | 0xEC, batch format | Pull collected tag data from flash |
+| 0xEB | `FF` | 0xEC, payload `count(1) | count times: [len][record bytes]` | Pull collected tag data from flash. The layout comes from the Android demo decode, the Java jar passes the payload through raw, so it is **unverified** on the UR4 |
 
 Presence of the flash commands on the UR4 is **unverified**, the Android SDK inherits them from the A8 product line.
 
@@ -225,7 +224,7 @@ Presence of the flash commands on the UR4 is **unverified**, the Android SDK inh
 | 0A | `0A` | `0A gpo0 gpo1` | Get GPO output state |
 | 0B | `0B io workHi workLo intHi intLo out 00` | `01` | Set trigger mode parameters. See below |
 | 0C | `0C` | `0C io workHi workLo intHi intLo out` | Get trigger mode parameters |
-| 11 | `11 volume` | `01` | Set buzzer volume |
+| 11 | `11 volume` | `01` or `11 01` | Set buzzer volume. The Android SDK is the only source and expects the subcommand echoed back, the family convention answers `01`, so both are accepted. **Unverified** |
 | 12 | `12` | `12 volume` | Get buzzer volume |
 
 Trigger parameters for sub 0B:
@@ -241,10 +240,12 @@ Trigger parameters for sub 0B:
 | Request payload | Meaning |
 |---|---|
 | `01` | Battery charge percentage, answered by 0xE5 with `01 pct` |
-| `02` | Scan a 1D or 2D barcode, if the reader variant has an imager. Response `02` followed by the barcode bytes, the 3-byte form `02 02 00` means no read. **Unverified** |
+| `02` | Scan a 1D or 2D barcode, if the reader variant has an imager. Response `02` followed by the barcode bytes, the 3-byte form `02 02 00` means no read. The Android SDK defines the no-read form, the Java jar does not. **Unverified** |
 | `03 01 duration` | Buzzer duration |
-| `03 01 01` | Beep once, the hardcoded frame `A5 5A 00 0A E4 03 01 EC 0D 0A` |
-| `03 01 00` | Silence the buzzer |
+| `03 01` | Beep once, the hardcoded frame `A5 5A 00 0A E4 03 01 EC 0D 0A` |
+| `03 00` | Buzzer off, the hardcoded frame `A5 5A 00 0A E4 03 00 ED 0D 0A` |
+| `05 value` | Set the reader idle sleep time, unit **unverified**, answered by 0xE5 with `01` |
+| `06` | Get the reader idle sleep time, answered by 0xE5 with `06 value` |
 | `07 01 00 00 00` | LED on |
 | `07 00 00 00 00` | LED off |
 | `07 02 r g b` | Blink the LED with color components |
@@ -273,6 +274,14 @@ Imager module settings with two subchannels, 118 and 119, and an ack convention 
 
 All four answer payload `01`. Block order and image format **unverified**, the SDK sends raw 64-byte blocks.
 
+## Other product lines
+
+The shared SDK code bases carry commands for other Chainway products. They are decoded but not implemented in this library and have no confirmed UR4 support:
+
+| Command | Request payload | Response | Meaning |
+|---|---|---|---|
+| 0xE5 | `04 mode` | 0xE6, payload `01` | R6 work mode |
+
 ## Tag record
 
 The payload of a 0x83 frame, and the response of a single inventory (0x81), is one tag record:
@@ -283,7 +292,8 @@ PC(2) | EPC(...) | TID(12, optional) | USER(..., optional) | RSSI(2) | ANT(1)
 
 - EPC length comes from the Gen2 PC word: bytes = (PC[0] >> 3) * 2, where PC[0] is the first byte of the record
 - TID is present as a fixed 12-byte block when the inventory mode includes TID
-- USER data follows TID when the mode includes it
+- USER data follows TID when the mode includes it. The SDKs treat more than 3 bytes after the TID block as the marker for a present USER block
+- Without a TID block the RSSI pair and the antenna byte sit directly after the EPC, the SDKs have no short TID block
 - RSSI: 16-bit big-endian. dBm = (raw - 65535) / 10, so raw 0xFED6 = -29.7 dBm. The SDKs treat values where 65535 - raw >= 2000 as invalid
 - ANT: 1-byte antenna index, 0-based
 
@@ -296,9 +306,9 @@ indexHi indexLo count | count times: [len][record bytes]
 ```
 
 - 0xE0 records are raw EPC bytes with no PC word and no RSSI or antenna
-- 0xE2 records are full tag records with the PC word and RSSI but no antenna byte
+- 0xE2 records are full tag records with the PC word and RSSI but no antenna byte, and the batch carries one extra byte before the index pair
 - A payload shorter than 5 bytes carries only the 16-bit index, the SDK reports it as an invalid tag marker
-- The 0xE2 batch carries one extra byte before the index, meaning **unverified**
+- The 0xEC flash response follows a different layout, one count byte then per record one length byte and raw EPC bytes, from the Android demo decode
 
 The Windows DLL exposes a different, length-prefixed layout to applications through `UHF_GetReceived_EX`: `uiiLen | PC+EPC | tidLen | TID | RSSI(2) | ANT(1)`. The two pure-Java SDKs parse the PC-based layout directly off the wire, so the PC-based layout is the wire format and the length-prefixed layout is a DLL-side representation. **Verify against live traffic when hardware is available.**
 
@@ -331,9 +341,10 @@ Set with 0xA1 sub 05.
 - Error payload values beyond `01` and `01 00`, no SDK decodes them
 - The meaning of the leading `02` in the 0x10 set power payload and the leading `00` in the 0x52 RF link payload
 - The 0x4A work time save flag reading, inferred from the AAR and jar disagreement
-- The 0xE2 request tail and the extra leading byte in its response
+- The 0xE2 request tail
 - The 0xF0 user settings semantics beyond the shapes listed above
-- Antenna work time unit
+- Antenna work time unit, the idle sleep time unit, and the inventory modes 3, 10, 14 and 15 from the parser constants
+- Whether the volume set response is a bare `01` or echoes the subcommand, the only parser and the family convention disagree
 - Whether the flash storage commands 0xE9 and 0xEB apply to the UR4
 - RS-485 variants, if the specific unit has one: half-duplex direction control is outside the protocol
 

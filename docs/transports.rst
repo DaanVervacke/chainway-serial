@@ -46,8 +46,11 @@ its own.
 Keepalive
 ---------
 
-The SDK connection managers send a get-version frame every 5 seconds
-when idle, a bare ``00`` byte every 5 seconds during an inventory, and
-treat 20 seconds of inbound silence as a dead link. The client does the
-same by default. Tune it with ``keepalive_interval`` and
-``dead_link_timeout``, both in seconds.
+The SDK connection managers keep the link alive in different ways. The
+Android SDK sends a heartbeat only after 5 seconds of inbound silence
+and treats 20 seconds of silence as a dead link, the Java jar polls
+every 2 seconds with a 10 second limit. This library sends a
+get-version frame every 5 seconds, or a bare ``00`` byte during an
+inventory, drops the link after 20 seconds of inbound silence on an
+idle link, and suspends the dead-link check while a scan runs. Tune it
+with ``keepalive_interval`` and ``dead_link_timeout``, both in seconds.
