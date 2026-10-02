@@ -33,6 +33,8 @@ class FakeReaderLogic:
         self.antenna_state_payload = b"\x00\x03"
         self.gen2_payload = b"\x84\x4f\xf2\x1a"
         self.collected_payload = b"\x00\x05\x02\x06\x11\x22\x33\x44\x55\x66\x04\xaa\xbb\xcc\xdd"
+        self.flash_payload = b"\x02\x06\x11\x22\x33\x44\x55\x66\x04\xaa\xbb\xcc\xdd"
+        self.idle_sleep_time = 0x0A
         self.single_inventory_payload = b"\x30\x00" + bytes(range(1, 13)) + b"\xfe\xd6\x00"
         self.read_tag_payload = b"\x01\x00\x00\x02\x11\x22\x33\x44"
         self.barcode_payload = b"\x02\x02\x00"
@@ -97,7 +99,7 @@ class FakeReaderLogic:
             Command.KILL_TAG: lambda _payload: self._tag_result(Command.KILL_TAG),
             Command.READ_COLLECTED_TAGS: lambda _payload: self.collected_payload,
             Command.FLASH_STORAGE: self._respond_flash,
-            Command.READ_FLASH_TAGS: lambda _payload: self.collected_payload,
+            Command.READ_FLASH_TAGS: lambda _payload: self.flash_payload,
             Command.JUMP_TO_BOOTLOADER: lambda _payload: b"\x01",
             Command.START_UPDATE: lambda _payload: b"\x01",
             Command.UPDATE_BLOCK: lambda _payload: b"\x01",
@@ -193,6 +195,11 @@ class FakeReaderLogic:
             return b"\x01\x64"
         if payload[0] == PeripheralSubcommand.BARCODE:
             return self.barcode_payload
+        if payload[0] == PeripheralSubcommand.IDLE_SLEEP_SET:
+            self.idle_sleep_time = payload[1]
+            return b"\x01"
+        if payload[0] == PeripheralSubcommand.IDLE_SLEEP_GET:
+            return b"\x06" + bytes((self.idle_sleep_time,))
         return b"\x01"
 
     def _respond_protocol_type(self, payload: bytes) -> bytes:

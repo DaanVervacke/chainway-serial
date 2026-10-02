@@ -14,6 +14,7 @@ import serialx
 from serialx import BaseSerialTransport, Parity, StopBits
 
 from .const import (
+    BARCODE_NO_READ_PAYLOAD,
     BOOTLOADER_JUMP_PAYLOAD,
     BYTE_MAX,
     DEFAULT_BAUDRATE,
@@ -81,6 +82,7 @@ from .parsers import (
     pack_gen2_parameters,
     parse_antenna_connection_state,
     parse_collected_tags,
+    parse_flash_tags,
     parse_power_records,
     parse_reader_address,
     parse_tag_record,
@@ -114,7 +116,7 @@ def _consume_task_exception(task: asyncio.Task[None]) -> None:
 
 
 def _require_ack(payload: bytes, command: Command) -> None:
-    if payload != b"\x01":
+    if not payload or payload[0] != 0x01:
         msg = f"command {command:#04x} was not acknowledged, got payload {payload!r}"
         raise ChainwayResponseError(msg)
 
@@ -167,7 +169,8 @@ class ChainwayClient:
             response_timeout: Seconds to wait for each reader response.
             keepalive_interval: Seconds between keepalive sends.
             dead_link_timeout: Seconds of inbound silence after which
-                the link is dropped.
+                an idle link is dropped. The check stays suspended
+                while an inventory runs.
             on_tag: Called with every tag sighting that arrives outside
                 an active :meth:`inventory` iteration.
             on_connection_lost: Called with the error that ended the
@@ -291,6 +294,31 @@ class ChainwayClient:
         require_status_header(payload, 2, PeripheralSubcommand.BATTERY, "battery")
         return payload[1]
 
+    async def set_reader_idle_sleep_time(self, value: int) -> None:
+        """Set the reader idle sleep time.
+
+        Both SDKs carry the command, neither documents the unit, so
+        the meaning of the value is unverified.
+
+        Raises:
+            ValueError: The value is out of range.
+        """
+        if not 0 <= value <= BYTE_MAX:
+            msg = f"idle sleep time must be between 0 and 255, got {value}"
+            raise ValueError(msg)
+        response = await self._request(
+            Command.PERIPHERAL, bytes((PeripheralSubcommand.IDLE_SLEEP_SET, value))
+        )
+        _require_ack(response, Command.PERIPHERAL)
+
+    async def get_reader_idle_sleep_time(self) -> int:
+        """Return the reader idle sleep time."""
+        payload = await self._request(
+            Command.PERIPHERAL, bytes((PeripheralSubcommand.IDLE_SLEEP_GET,))
+        )
+        require_status_header(payload, 2, PeripheralSubcommand.IDLE_SLEEP_GET, "idle sleep time")
+        return payload[1]
+
     async def set_rf_power(self, power_dbm: float, *, antenna: int = 1) -> None:
         """Set the transmit and receive power of one antenna.
 
@@ -362,10 +390,14 @@ class ChainwayClient:
         _require_ack(response, Command.SET_CARRIER_WAVE)
 
     async def get_carrier_wave(self) -> bool:
-        """Return whether the continuous carrier wave is on."""
+        """Return whether the continuous carrier wave is on.
+
+        Both SDKs read the first payload byte as the state and do not
+        check the response length, so any length is accepted.
+        """
         payload = await self._request(Command.GET_CARRIER_WAVE)
-        require_status_header(payload, 2, 0x01, "carrier")
-        return payload[1] == 0x01
+        require_minimum_length(payload, 1, "carrier wave")
+        return payload[0] == 0x01
 
     async def set_gen2_parameters(self, parameters: Gen2Parameters) -> None:
         """Set the Gen2 inventory parameters."""
@@ -806,16 +838,23 @@ class ChainwayClient:
     async def delete_collected_tags(self) -> None:
         """Delete every collected tag from the reader storage."""
         payload = await self._request(Command.FLASH_STORAGE, bytes((FlashSubcommand.DELETE_ALL,)))
-        if payload != b"\x00\x00":
+        require_minimum_length(payload, 2, "delete")
+        if payload[0] != 0x00 or payload[1] != 0x00:
             msg = f"delete was not acknowledged, got payload {payload!r}"
             raise ChainwayResponseError(msg)
 
-    async def read_collected_tags_from_flash(self) -> CollectedTags:
-        """Pull collected tags from the flash storage."""
+    async def read_collected_tags_from_flash(self) -> tuple[bytes, ...]:
+        """Pull collected EPCs from the flash storage.
+
+        The response layout follows the Android demo decode: a one
+        byte record count, then per record one length byte and the raw
+        EPC bytes. No SDK for the UR4 decodes it, so the shape stays
+        unverified until live traffic confirms it.
+        """
         payload = await self._request(
             Command.READ_FLASH_TAGS, bytes((FlashDataSubcommand.READ_ALL,))
         )
-        return parse_collected_tags(payload)
+        return parse_flash_tags(payload)
 
     async def set_reader_address(self, address: ReaderAddress) -> None:
         """Set the reader IP and port, with optional mask and gateway."""
@@ -914,6 +953,11 @@ class ChainwayClient:
     async def set_volume(self, volume: int) -> None:
         """Set the buzzer volume.
 
+        The Android SDK is the only source for the response and
+        expects the subcommand echoed back, every other set command of
+        the family answers with a bare acknowledgement, so both shapes
+        are accepted.
+
         Raises:
             ValueError: The volume is out of range.
         """
@@ -921,7 +965,9 @@ class ChainwayClient:
             msg = f"volume must be between 0 and 255, got {volume}"
             raise ValueError(msg)
         response = await self._request(Command.CONFIG, bytes((ConfigSubcommand.SET_VOLUME, volume)))
-        _require_ack(response, Command.CONFIG)
+        if response[:1] != b"\x01" and response != b"\x11\x01":
+            msg = f"volume set was not acknowledged, got payload {response!r}"
+            raise ChainwayResponseError(msg)
 
     async def get_volume(self) -> int:
         """Return the buzzer volume."""
@@ -930,10 +976,14 @@ class ChainwayClient:
         return payload[1]
 
     async def scan_barcode(self) -> bytes | None:
-        """Scan one barcode with the imager and return its bytes."""
+        """Scan one barcode with the imager and return its bytes.
+
+        A response without a barcode, the three byte form ``02 02 00``
+        or a bare subcommand echo, returns None.
+        """
         payload = await self._request(Command.PERIPHERAL, bytes((PeripheralSubcommand.BARCODE,)))
         require_status_header(payload, 1, PeripheralSubcommand.BARCODE, "barcode")
-        if payload == b"\x02\x02\x00":
+        if len(payload) < len(BARCODE_NO_READ_PAYLOAD) or payload == BARCODE_NO_READ_PAYLOAD:
             return None
         return payload[1:]
 
@@ -1141,7 +1191,10 @@ class ChainwayClient:
             if protocol is None:
                 return
             now = time.monotonic()
-            if now - protocol.last_activity >= self.dead_link_timeout:
+            if (
+                not self._inventory_active
+                and now - protocol.last_activity >= self.dead_link_timeout
+            ):
                 await self._drop_link(ChainwayConnectionError("the link went silent"))
                 return
             if now - self._last_keepalive >= self.keepalive_interval:

@@ -18,7 +18,7 @@ class _DiscoveryProtocol(asyncio.DatagramProtocol):
         self._readers = readers
 
     def datagram_received(self, data: bytes, _addr: tuple[str | None, int]) -> None:
-        if len(data) != DISCOVERY_PACKET_SIZE:
+        if len(data) < DISCOVERY_PACKET_SIZE:
             _LOGGER.debug("ignoring %d byte discovery packet", len(data))
             return
         mac = ":".join(f"{byte:02x}" for byte in data[0:6])
@@ -39,9 +39,10 @@ async def discover_readers(
     """Listen for reader discovery broadcasts and return what answered.
 
     The reader sends a 12-byte packet with its MAC address, IPv4
-    address and TCP port to the discovery port. The listener runs for
-    ``listen_seconds`` seconds, collects one entry per unique reader,
-    and returns them sorted by address.
+    address and TCP port to the discovery port. Both SDKs accept
+    longer packets and read the first 12 bytes, so the listener does
+    the same. It runs for ``listen_seconds`` seconds, collects one
+    entry per unique reader, and returns them sorted by address.
 
     Args:
         listen_seconds: Seconds to listen before returning.

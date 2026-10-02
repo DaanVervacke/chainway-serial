@@ -282,7 +282,7 @@ async def test_collected_tag_counts_and_delete(client: ChainwayClient) -> None:
     assert await client.get_new_collected_tag_count() == 2
     await client.delete_collected_tags()
     collected = await client.read_collected_tags_from_flash()
-    assert collected.tags == (b"\x11\x22\x33\x44\x55\x66", b"\xaa\xbb\xcc\xdd")
+    assert collected == (b"\x11\x22\x33\x44\x55\x66", b"\xaa\xbb\xcc\xdd")
 
 
 async def test_reader_address_with_mask_and_gateway(client: ChainwayClient) -> None:

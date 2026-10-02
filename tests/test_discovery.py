@@ -29,6 +29,18 @@ async def test_discover_readers_collects_broadcasts() -> None:
     assert readers == [DiscoveredReader(mac="aa:bb:cc:dd:ee:ff", ip="192.168.99.200", port=8888)]
 
 
+async def test_discover_readers_accepts_padded_packets() -> None:
+    port = free_udp_port()
+    task = asyncio.create_task(discover_readers(listen_seconds=0.3, port=port))
+    await asyncio.sleep(0.05)
+    sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    packet = bytes.fromhex("aabbccddeeff") + bytes((192, 168, 99, 200)) + b"\x22\xb8"
+    sender.sendto(packet + b"\x00\x00", ("127.0.0.1", port))
+    sender.close()
+    readers = await task
+    assert readers == [DiscoveredReader(mac="aa:bb:cc:dd:ee:ff", ip="192.168.99.200", port=8888)]
+
+
 async def test_discover_readers_returns_empty_without_broadcasts() -> None:
     port = free_udp_port()
     assert await discover_readers(listen_seconds=0.05, port=port) == []

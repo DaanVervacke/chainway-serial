@@ -23,6 +23,65 @@ async def _anext(stream: object) -> object:
     return await stream.__anext__()  # type: ignore[attr-defined]
 
 
+async def test_failing_volume_ack_raises(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    logic._config_responders[0x11] = lambda _payload: b"\x11\x02"
+    with pytest.raises(ChainwayResponseError, match="not acknowledged"):
+        await client.set_volume(5)
+
+
+async def test_carrier_wave_single_byte_response(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    logic._responders[Command.GET_CARRIER_WAVE] = lambda _payload: b"\x01"
+    assert await client.get_carrier_wave() is True
+    logic._responders[Command.GET_CARRIER_WAVE] = lambda _payload: b"\x00"
+    assert await client.get_carrier_wave() is False
+
+
+async def test_volume_accepts_the_echoed_subcommand_ack(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    logic._config_responders[0x11] = lambda _payload: b"\x11\x01"
+    await client.set_volume(5)
+
+
+async def test_reader_idle_sleep_time_roundtrip(client: ChainwayClient) -> None:
+    await client.set_reader_idle_sleep_time(12)
+    assert await client.get_reader_idle_sleep_time() == 12
+
+
+async def test_set_reader_idle_sleep_time_rejects_a_bad_value(client: ChainwayClient) -> None:
+    with pytest.raises(ValueError, match="idle sleep time"):
+        await client.set_reader_idle_sleep_time(256)
+
+
+async def test_dead_link_watchdog_stays_suspended_during_a_scan(
+    reader_server: tuple[FakeReaderLogic, int],
+) -> None:
+    logic, port = reader_server
+    client = ChainwayClient(
+        f"socket://127.0.0.1:{port}",
+        keepalive_interval=60.0,
+        dead_link_timeout=0.1,
+    )
+    await client.connect()
+    await wait_for_server(logic)
+    logic.tags_to_stream = []
+    try:
+        await client.start_inventory()
+        await asyncio.sleep(0.3)
+        assert client.connected is True
+        assert client.inventory_active is True
+    finally:
+        await client.stop_inventory()
+        await client.disconnect()
+
+
 async def test_failing_ack_raises(
     client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
 ) -> None:

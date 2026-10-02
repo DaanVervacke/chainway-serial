@@ -25,6 +25,7 @@ from chainway_serial.parsers import (
     pack_gen2_parameters,
     parse_antenna_connection_state,
     parse_collected_tags,
+    parse_flash_tags,
     parse_power_records,
     parse_reader_address,
     parse_tag_record,
@@ -118,11 +119,13 @@ def test_parse_tag_record_without_antenna() -> None:
     assert tag.rssi == -29.7
 
 
-def test_parse_tag_record_short_tid_block() -> None:
+def test_parse_tag_record_without_tid_reads_rssi_after_the_epc() -> None:
     record = b"\x30\x00" + bytes(range(1, 13)) + b"\x01\x02\xfe\xd6\x00"
     tag = parse_tag_record(record, with_antenna=True, received_at=RECEIVED_AT)
-    assert tag.tid == b"\x01\x02"
+    assert tag.tid is None
     assert tag.user_data is None
+    assert tag.rssi is None
+    assert tag.antenna == 0xFE
 
 
 def test_parse_tag_record_tid_without_user_data() -> None:
@@ -130,6 +133,32 @@ def test_parse_tag_record_tid_without_user_data() -> None:
     tag = parse_tag_record(record, with_antenna=True, received_at=RECEIVED_AT)
     assert tag.tid == bytes(range(13, 25))
     assert tag.user_data is None
+
+
+def test_parse_tag_record_tid_only_without_rssi() -> None:
+    record = b"\x30\x00" + bytes(range(1, 13)) + bytes(range(13, 25))
+    tag = parse_tag_record(record, with_antenna=True, received_at=RECEIVED_AT)
+    assert tag.tid == bytes(range(13, 25))
+    assert tag.rssi is None
+    assert tag.antenna is None
+
+
+def test_parse_tag_record_tid_and_rssi_without_antenna() -> None:
+    record = b"\x30\x00" + bytes(range(1, 13)) + bytes(range(13, 25)) + b"\xfe\xd6"
+    tag = parse_tag_record(record, with_antenna=True, received_at=RECEIVED_AT)
+    assert tag.tid == bytes(range(13, 25))
+    assert tag.user_data is None
+    assert tag.rssi == -29.7
+    assert tag.antenna is None
+
+
+def test_parse_tag_record_batch_user_without_antenna() -> None:
+    record = b"\x30\x00" + bytes(range(1, 13)) + bytes(range(13, 25)) + b"\xaa\xbb" + b"\xfe\xd6"
+    tag = parse_tag_record(record, with_antenna=False, received_at=RECEIVED_AT)
+    assert tag.tid == bytes(range(13, 25))
+    assert tag.user_data == b"\xaa\xbb"
+    assert tag.rssi == -29.7
+    assert tag.antenna is None
 
 
 def test_parse_tag_record_without_rssi_or_antenna() -> None:
@@ -204,6 +233,28 @@ def test_lock_code_tid_bank_permanently_open() -> None:
 
 def test_lock_code_user_bank_open() -> None:
     assert build_lock_code([LockBank.USER], LockMode.OPEN) == b"\x00\x08\x00"
+
+
+def test_lock_code_rejects_an_empty_bank_selection() -> None:
+    with pytest.raises(ValueError, match="at least one memory"):
+        build_lock_code([], LockMode.LOCK)
+
+
+def test_parse_flash_tags() -> None:
+    payload = b"\x02\x06\x11\x22\x33\x44\x55\x66\x04\xaa\xbb\xcc\xdd"
+    assert parse_flash_tags(payload) == (b"\x11\x22\x33\x44\x55\x66", b"\xaa\xbb\xcc\xdd")
+
+
+def test_parse_flash_tags_stops_at_a_truncated_record() -> None:
+    assert parse_flash_tags(b"\x02\x06\x11\x22\x33") == ()
+
+
+def test_parse_flash_tags_stops_when_the_count_overruns() -> None:
+    assert parse_flash_tags(b"\x02\x02\x11\x22") == (b"\x11\x22",)
+
+
+def test_parse_flash_tags_empty_count() -> None:
+    assert parse_flash_tags(b"\x00") == ()
 
 
 def test_lock_code_combines_banks() -> None:
@@ -288,7 +339,8 @@ def test_build_filter_payload() -> None:
 
 
 def test_build_filter_payload_clear_form() -> None:
-    assert build_filter_payload(None, save=False) == b"\x00\x01\x00\x00\x00\x00\x00"
+    assert build_filter_payload(None, save=False) == b"\x00\x01\x00\x00\x00\x00"
+    assert build_filter_payload(None, save=True) == b"\x01\x01\x00\x00\x00\x00"
 
 
 def test_validate_word_window() -> None:

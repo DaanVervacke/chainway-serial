@@ -21,6 +21,7 @@ from .const import (
     READER_ADDRESS_LONG_SIZE,
     READER_ADDRESS_SIZE,
     TID_SIZE,
+    USER_BLOCK_MARGIN,
     WORD_MAX,
 )
 from .exceptions import ChainwayResponseError
@@ -159,17 +160,25 @@ def parse_tag_record(
 ) -> Tag:
     """Parse one tag record of a 0x83, 0x81 or batch response.
 
+    The blocks follow the SDK parsers exactly. With a TID block
+    present, USER data fills the space between the TID and the
+    trailing RSSI pair, and more than three bytes after the TID mark
+    the USER block as present, a margin the SDKs hardcode. Without a
+    TID block the RSSI pair and the antenna byte sit directly after
+    the EPC.
+
     Args:
-        record: The raw record bytes: PC, then EPC, then the optional TID
-            and USER blocks, then the RSSI pair and the optional antenna
-            byte.
-        with_antenna: Whether the record ends with one antenna byte after
-            the RSSI pair. Inventory records carry it, collected tag
-            records do not.
+        record: The raw record bytes: PC, then EPC, then the optional
+            TID and USER blocks, then the RSSI pair and the optional
+            antenna byte.
+        with_antenna: Whether the record ends with one antenna byte
+            after the RSSI pair. Inventory records carry it, collected
+            tag records do not.
         received_at: Reception timestamp stored on the tag.
 
     Raises:
-        ChainwayResponseError: The record is too short or carries no EPC.
+        ChainwayResponseError: The record is too short or carries no
+            EPC.
     """
     require_minimum_length(record, MIN_TAG_RECORD_SIZE, "tag record")
     epc_length = (record[0] >> 3) * 2 + 2
@@ -177,28 +186,39 @@ def parse_tag_record(
         len(record) >= epc_length,
         f"tag record needs {epc_length} bytes of PC and EPC, got {len(record)}",
     )
-    pc = record[:2]
-    epc = record[2:epc_length]
     trailing = 3 if with_antenna else 2
-    body_end = len(record) - trailing
+    rssi_bytes: bytes | None = None
+    antenna: int | None = None
     tid: bytes | None = None
     user_data: bytes | None = None
-    if body_end - epc_length >= TID_SIZE:
+    if len(record) >= epc_length + TID_SIZE:
         tid = record[epc_length : epc_length + TID_SIZE]
-        if body_end - epc_length - TID_SIZE > 0:
+        if len(record) - USER_BLOCK_MARGIN > epc_length + TID_SIZE:
+            body_end = len(record) - trailing
             user_data = record[epc_length + TID_SIZE : body_end]
-    elif body_end - epc_length > 0:
-        tid = record[epc_length:body_end]
+            rssi_bytes = record[body_end : body_end + 2]
+            if len(record) >= body_end + 3:
+                antenna = record[body_end + 2]
+        else:
+            rssi_end = epc_length + TID_SIZE + 2
+            if len(record) >= rssi_end:
+                rssi_bytes = record[epc_length + TID_SIZE : rssi_end]
+                if len(record) >= rssi_end + 1:
+                    antenna = record[rssi_end]
+    else:
+        rssi_end = epc_length + 2
+        if len(record) >= rssi_end:
+            rssi_bytes = record[epc_length:rssi_end]
+            if len(record) >= rssi_end + 1:
+                antenna = record[rssi_end]
     rssi: float | None = None
-    if len(record) >= epc_length + trailing:
-        raw_rssi = record[-trailing] << 8 | record[-trailing + 1]
-        span = WORD_MAX - raw_rssi
+    if rssi_bytes is not None:
+        span = WORD_MAX - (rssi_bytes[0] << 8 | rssi_bytes[1])
         if 0 < span < INVALID_RSSI_SPAN:
             rssi = -span / 10
-    antenna = record[-1] if with_antenna and len(record) >= epc_length + trailing else None
     return Tag(
-        pc=pc,
-        epc=epc,
+        pc=record[:2],
+        epc=record[2:epc_length],
         tid=tid,
         user_data=user_data,
         rssi=rssi,
@@ -233,14 +253,45 @@ def parse_collected_tags(payload: bytes) -> CollectedTags:
     return CollectedTags(index=index, tags=tuple(tags))
 
 
+def parse_flash_tags(payload: bytes) -> tuple[bytes, ...]:
+    """Parse the flash storage payload of a 0xEC response.
+
+    The payload carries a one byte record count, then per record one
+    length byte and the record bytes, which are raw EPC data. This
+    layout comes from the Android demo decode, the Java jar passes
+    the payload through raw, so the shape is unverified on the UR4.
+    """
+    require_minimum_length(payload, 1, "flash")
+    count = payload[0]
+    tags: list[bytes] = []
+    offset = 1
+    for _ in range(count):
+        if offset >= len(payload):
+            break
+        length = payload[offset]
+        end = offset + 1 + length
+        if end > len(payload):
+            break
+        tags.append(payload[offset + 1 : end])
+        offset = end
+    return tuple(tags)
+
+
 def build_lock_code(banks: Iterable[LockBank], mode: LockMode) -> bytes:
     """Build the 3-byte lock code from the selected banks and one mode.
 
     The code packs the Gen2 lock mask into bits 19 down to 10 and the
     action into bits 9 down to 0, two bits per memory bank.
+
+    Raises:
+        ValueError: No bank was selected.
     """
+    selected = tuple(banks)
+    if not selected:
+        msg = "banks must select at least one memory"
+        raise ValueError(msg)
     code = 0
-    for bank in banks:
+    for bank in selected:
         mask_bit, mask_flag, action_high, action_low = _LOCK_BANK_BITS[bank]
         code |= mask_bit
         if mode in (LockMode.LOCK, LockMode.PERMANENTLY_LOCK):
@@ -377,11 +428,11 @@ def build_tag_operation_payload(
 def build_filter_payload(tag_filter: TagFilter | None, *, save: bool) -> bytes:
     """Build the 0x6E payload, or the clear-filter form without a filter.
 
-    A filter with a zero bit length clears the active filter and carries
-    one zero data byte, matching the Android SDK.
+    A filter with a zero bit length clears the active filter and
+    carries no data bytes, matching both SDKs.
     """
     if tag_filter is None or tag_filter.bit_length == 0:
-        return bytes((int(save), MemoryBank.EPC, 0, 0, 0, 0, 0))
+        return bytes((int(save), MemoryBank.EPC, 0, 0, 0, 0))
     data_length = math.ceil(tag_filter.bit_length / 8)
     return (
         bytes((int(save),))
