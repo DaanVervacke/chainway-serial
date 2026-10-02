@@ -11,6 +11,12 @@ Asynchronous Python library for the [Chainway UR4](https://www.chainway.net/) fi
 uv add chainway-serial
 ```
 
+or:
+
+```bash
+pip install chainway-serial
+```
+
 ```python
 import asyncio
 

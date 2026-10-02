@@ -7,6 +7,12 @@ Install with uv:
 
    uv add chainway-serial
 
+or with pip:
+
+.. code-block:: bash
+
+   pip install chainway-serial
+
 Connect over TCP and read the firmware version:
 
 .. code-block:: python

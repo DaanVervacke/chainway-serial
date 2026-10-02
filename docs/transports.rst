@@ -17,6 +17,8 @@ device paths:
 
 .. code-block:: python
 
+   import serialx
+
    ChainwayClient(
        "/dev/ttyUSB0",
        baudrate=115200,

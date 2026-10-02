@@ -122,4 +122,4 @@ Peripherals
    await client.set_volume(5)
    await client.set_led(enabled=True)
    await client.blink_led(10, 20, 30)
-   await client.set_gpo(True, False, relay_closed=True)
+   await client.set_gpo(output_0=True, output_1=False, relay_closed=True)
