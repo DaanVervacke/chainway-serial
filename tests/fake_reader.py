@@ -1,0 +1,265 @@
+"""Scriptable Chainway UR4 responder, transport agnostic."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Callable
+
+from chainway_serial.const import (
+    FRAME_HEADER,
+    MAX_FRAME_LENGTH,
+    MIN_FRAME_LENGTH,
+    Command,
+    ConfigSubcommand,
+    FlashSubcommand,
+    PeripheralSubcommand,
+    ProtocolTypeSelector,
+)
+from chainway_serial.exceptions import ChainwayProtocolError
+from chainway_serial.frames import build_frame, parse_frame
+
+Responder = Callable[[bytes], bytes]
+
+
+class FakeReaderLogic:
+    """Answer Chainway UR4 requests with scripted or stored state."""
+
+    def __init__(self) -> None:
+        self.received: list[tuple[int, bytes]] = []
+        self.raw: list[bytes] = []
+        self.version_payload = b"\x01\x02\x03"
+        self.temperature_payload = b"\x01\x10\x0e"
+        self.power_payload = b"\x00\x01\x0b\xb8\x0b\xb8"
+        self.antenna_state_payload = b"\x00\x03"
+        self.gen2_payload = b"\x84\x4f\xf2\x1a"
+        self.collected_payload = b"\x00\x05\x02\x06\x11\x22\x33\x44\x55\x66\x04\xaa\xbb\xcc\xdd"
+        self.single_inventory_payload = b"\x30\x00" + bytes(range(1, 13)) + b"\xfe\xd6\x00"
+        self.read_tag_payload = b"\x01\x00\x00\x02\x11\x22\x33\x44"
+        self.barcode_payload = b"\x02\x02\x00"
+        self.tags_to_stream: list[bytes] = []
+        self.stream_delay = 0.01
+        self.silent_commands: set[int] = set()
+        self.drop_connection_commands: set[int] = set()
+        self.bad_checksum_commands: set[int] = set()
+        self.failing_tag_commands: set[int] = set()
+        self.junk_on_connect = b""
+        self.protocol_type = 0x00
+        self.inventory_mode = b"\x02\x00\x04"
+        self.antenna_mask = b"\x00\x01"
+        self.work_mode = 0x00
+        self.buzzer_state = 0x01
+        self.gpo_state = b"\x01\x00"
+        self.trigger_config = b"\x00\x00\x64\x00\x0a\x00"
+        self.volume = 0x05
+        self.antenna_work_time: dict[int, int] = {1: 100}
+        self.push: Callable[[bytes], None] | None = None
+        self.close_transport: Callable[[], None] | None = None
+        self._buffer = bytearray()
+        self._inventory_task: asyncio.Task[None] | None = None
+        self._responders: dict[int, Responder] = {
+            Command.GET_VERSION: lambda _payload: self.version_payload,
+            Command.STM32_VERSION: lambda _payload: b"\x01\x00\x01",
+            Command.MODULE_VERSION: lambda _payload: b"\x00\x01\x02",
+            Command.GET_TEMPERATURE: lambda _payload: self.temperature_payload,
+            Command.ANTENNA_CONNECTION_STATE: lambda _payload: self.antenna_state_payload,
+            Command.SET_POWER: lambda _payload: b"\x01",
+            Command.GET_POWER: lambda _payload: self.power_payload,
+            Command.SET_FIXED_FREQUENCY: lambda _payload: b"\x01",
+            Command.SET_REGION: lambda _payload: b"\x01",
+            Command.GET_REGION: lambda _payload: b"\x01\x08",
+            Command.SET_CARRIER_WAVE: lambda _payload: b"\x01",
+            Command.GET_CARRIER_WAVE: lambda _payload: b"\x01\x01",
+            Command.SET_GEN2_PARAMETERS: lambda _payload: b"\x01",
+            Command.GET_GEN2_PARAMETERS: lambda _payload: self.gen2_payload,
+            Command.SET_RF_LINK: lambda _payload: b"\x01",
+            Command.GET_RF_LINK: lambda _payload: b"\x01\x00\x02",
+            Command.SET_FAST_ID: lambda _payload: b"\x01",
+            Command.GET_FAST_ID: lambda _payload: b"\x01\x01",
+            Command.SET_TAG_FOCUS: lambda _payload: b"\x01",
+            Command.GET_TAG_FOCUS: lambda _payload: b"\x00\x01",
+            Command.SET_PROTOCOL_TYPE: self._respond_protocol_type,
+            Command.SET_INVENTORY_FILTER: lambda _payload: b"\x01",
+            Command.SET_INVENTORY_MODE: self._store_inventory_mode,
+            Command.GET_INVENTORY_MODE: lambda _payload: b"\x01" + self.inventory_mode,
+            Command.SET_ANTENNA_MASK: self._store_antenna_mask,
+            Command.GET_ANTENNA_MASK: lambda _payload: self.antenna_mask,
+            Command.SET_ANTENNA_WORK_TIME: self._store_antenna_work_time,
+            Command.GET_ANTENNA_WORK_TIME: self._respond_antenna_work_time,
+            Command.SET_FAST_INVENTORY_MODE: lambda _payload: b"\x01",
+            Command.GET_FAST_INVENTORY_MODE: lambda _payload: b"\x01\x01",
+            Command.SOFT_RESET: lambda _payload: b"\x01",
+            Command.SINGLE_INVENTORY: lambda _payload: self.single_inventory_payload,
+            Command.READ_TAG: self._respond_read_tag,
+            Command.WRITE_TAG: lambda _payload: self._tag_result(Command.WRITE_TAG),
+            Command.BLOCK_WRITE_TAG: lambda _payload: self._tag_result(Command.BLOCK_WRITE_TAG),
+            Command.BLOCK_ERASE_TAG: lambda _payload: self._tag_result(Command.BLOCK_ERASE_TAG),
+            Command.LOCK_TAG: lambda _payload: self._tag_result(Command.LOCK_TAG),
+            Command.KILL_TAG: lambda _payload: self._tag_result(Command.KILL_TAG),
+            Command.READ_COLLECTED_TAGS: lambda _payload: self.collected_payload,
+            Command.FLASH_STORAGE: self._respond_flash,
+            Command.READ_FLASH_TAGS: lambda _payload: self.collected_payload,
+            Command.JUMP_TO_BOOTLOADER: lambda _payload: b"\x01",
+            Command.START_UPDATE: lambda _payload: b"\x01",
+            Command.UPDATE_BLOCK: lambda _payload: b"\x01",
+            Command.STOP_UPDATE: lambda _payload: b"\x01",
+        }
+        self._config_responders: dict[int, Responder] = {
+            ConfigSubcommand.SET_READER_ADDRESS: lambda _payload: b"\x01",
+            ConfigSubcommand.GET_READER_ADDRESS: lambda _payload: b"\x02\xc0\xa8\x63\xc8\x22\xb8",
+            ConfigSubcommand.SET_DESTINATION_ADDRESS: lambda _payload: b"\x01",
+            ConfigSubcommand.GET_DESTINATION_ADDRESS: lambda _payload: (
+                b"\x04\xc0\xa8\x63\xc9\x13\x88"
+            ),
+            ConfigSubcommand.SET_WORK_MODE: self._store_work_mode,
+            ConfigSubcommand.GET_WORK_MODE: lambda _payload: b"\x06" + bytes((self.work_mode,)),
+            ConfigSubcommand.SET_BUZZER: self._store_buzzer,
+            ConfigSubcommand.GET_BUZZER: lambda _payload: b"\x08" + bytes((self.buzzer_state,)),
+            ConfigSubcommand.SET_GPO: self._store_gpo,
+            ConfigSubcommand.GET_GPO: lambda _payload: b"\x0a" + self.gpo_state,
+            ConfigSubcommand.SET_TRIGGER_CONFIG: self._store_trigger_config,
+            ConfigSubcommand.GET_TRIGGER_CONFIG: lambda _payload: b"\x0c" + self.trigger_config,
+            ConfigSubcommand.SET_VOLUME: self._store_volume,
+            ConfigSubcommand.GET_VOLUME: lambda _payload: b"\x12" + bytes((self.volume,)),
+        }
+
+    def handle_bytes(self, data: bytes) -> list[bytes]:
+        """Feed inbound bytes and return the response frames."""
+        self.raw.append(bytes(data))
+        self._buffer.extend(data)
+        responses: list[bytes] = []
+        while True:
+            extracted = self._extract_frame()
+            if extracted is None:
+                break
+            command, payload = extracted
+            self.received.append((command, payload))
+            if command in self.drop_connection_commands:
+                if self.close_transport is not None:
+                    self.close_transport()
+                break
+            if command in self.silent_commands:
+                continue
+            response = self._respond(command, payload)
+            if response is None:
+                continue
+            frame = build_frame(command + 1, response)
+            if command in self.bad_checksum_commands:
+                frame = frame[:-3] + bytes((frame[-3] ^ 0xFF,)) + frame[-2:]
+            responses.append(frame)
+        return responses
+
+    def _extract_frame(self) -> tuple[int, bytes] | None:
+        while True:
+            index = self._buffer.find(FRAME_HEADER)
+            if index < 0:
+                self._buffer.clear()
+                return None
+            if index > 0:
+                del self._buffer[:index]
+                continue
+            if len(self._buffer) < 4:
+                return None
+            length = self._buffer[2] << 8 | self._buffer[3]
+            if not MIN_FRAME_LENGTH <= length <= MAX_FRAME_LENGTH:
+                del self._buffer[:1]
+                continue
+            if len(self._buffer) < length:
+                return None
+            frame = bytes(self._buffer[:length])
+            del self._buffer[:length]
+            try:
+                return parse_frame(frame)
+            except ChainwayProtocolError:
+                continue
+
+    def _respond(self, command: int, payload: bytes) -> bytes | None:
+        if command == Command.START_INVENTORY:
+            self._inventory_task = asyncio.create_task(self._stream_tags())
+            return None
+        if command == Command.STOP_INVENTORY:
+            self._cancel_inventory()
+            return b"\x01"
+        if command == Command.CONFIG:
+            return self._config_responders[payload[0]](payload)
+        if command == Command.PERIPHERAL:
+            return self._respond_peripheral(payload)
+        responder = self._responders.get(command)
+        if responder is None:
+            return b"\x01"
+        return responder(payload)
+
+    def _respond_peripheral(self, payload: bytes) -> bytes:
+        if payload[0] == PeripheralSubcommand.BATTERY:
+            return b"\x01\x64"
+        if payload[0] == PeripheralSubcommand.BARCODE:
+            return self.barcode_payload
+        return b"\x01"
+
+    def _respond_protocol_type(self, payload: bytes) -> bytes:
+        if payload[0] == ProtocolTypeSelector.SET:
+            self.protocol_type = payload[1]
+            return b"\x00\x01"
+        return b"\x01" + bytes((self.protocol_type,))
+
+    def _respond_read_tag(self, _payload: bytes) -> bytes:
+        if Command.READ_TAG in self.failing_tag_commands:
+            return b"\x01\x01"
+        return self.read_tag_payload
+
+    def _tag_result(self, command: Command) -> bytes:
+        if command in self.failing_tag_commands:
+            return b"\x01\x01"
+        return b"\x01\x00"
+
+    def _respond_flash(self, payload: bytes) -> bytes:
+        if payload[0] == FlashSubcommand.DELETE_ALL:
+            return b"\x00\x00"
+        return b"\x00\x02"
+
+    def _store_inventory_mode(self, payload: bytes) -> bytes:
+        self.inventory_mode = payload[1:]
+        return b"\x01"
+
+    def _store_antenna_mask(self, payload: bytes) -> bytes:
+        self.antenna_mask = payload[1:]
+        return b"\x01"
+
+    def _store_antenna_work_time(self, payload: bytes) -> bytes:
+        self.antenna_work_time[payload[0] & 0x0F] = payload[1] << 8 | payload[2]
+        return b"\x01"
+
+    def _respond_antenna_work_time(self, payload: bytes) -> bytes:
+        antenna = payload[0]
+        work_time = self.antenna_work_time.get(antenna, 0)
+        return b"\x01" + bytes((antenna, work_time >> 8 & 0xFF, work_time & 0xFF))
+
+    def _store_work_mode(self, payload: bytes) -> bytes:
+        self.work_mode = payload[1]
+        return b"\x01"
+
+    def _store_buzzer(self, payload: bytes) -> bytes:
+        self.buzzer_state = payload[1]
+        return b"\x01"
+
+    def _store_gpo(self, payload: bytes) -> bytes:
+        self.gpo_state = payload[1:3]
+        return b"\x01"
+
+    def _store_trigger_config(self, payload: bytes) -> bytes:
+        self.trigger_config = payload[1:]
+        return b"\x01"
+
+    def _store_volume(self, payload: bytes) -> bytes:
+        self.volume = payload[1]
+        return b"\x01"
+
+    def _cancel_inventory(self) -> None:
+        if self._inventory_task is not None:
+            self._inventory_task.cancel()
+            self._inventory_task = None
+
+    async def _stream_tags(self) -> None:
+        for record in self.tags_to_stream:
+            await asyncio.sleep(self.stream_delay)
+            if self.push is not None:
+                self.push(build_frame(Command.TAG_STREAM, record))
