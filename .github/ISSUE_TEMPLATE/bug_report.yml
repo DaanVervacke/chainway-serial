@@ -1,0 +1,62 @@
+name: Bug report
+description: Report something that is not working as expected
+labels: [bugfix]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Never paste tag access passwords, kill passwords, or reader network
+        credentials into this report. Redact them before sharing any frame
+        or capture.
+  - type: input
+    id: package-version
+    attributes:
+      label: chainway-serial version
+      description: The version you have installed.
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      description: Output of `python --version`.
+      placeholder: 3.14.0
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: e.g. Ubuntu 24.04, macOS 15, Windows 11
+    validations:
+      required: true
+  - type: input
+    id: connection
+    attributes:
+      label: Connection
+      description: Which transport and URL you connect with.
+      placeholder: e.g. RS-232 on /dev/ttyUSB0, TCP on socket://192.168.99.200:8888
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: |
+        The smallest self-contained code snippet that triggers the bug, plus
+        the traceback if there is one. Redact all credentials first.
+      placeholder: |
+        import asyncio
+        from chainway_serial import ChainwayClient
+
+        ...
+    validations:
+      required: true
