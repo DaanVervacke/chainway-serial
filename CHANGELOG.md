@@ -8,9 +8,13 @@ Before 1.0, breaking changes ship as minor bumps.
 
 ## [Unreleased]
 
+### Bug Fixes
+
+- Match the wire handling to the decompiled SDK parsers
 ### Documentation
 
 - Add the decoded Chainway UR4 wire protocol reference
+- Correct the protocol reference from the SDK verification
 ### Features
 
 - Implement the frame codec, protocol, typed client and UDP discovery
