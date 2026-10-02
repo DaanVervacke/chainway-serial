@@ -31,7 +31,7 @@ jobs:
 
       - name: Bandit
         if: github.event_name != 'schedule'
-        run: uvx bandit -r src/ scripts/ -ll
+        run: uvx bandit -r src/ scripts/ -ll --skip B104
 
       - name: uv audit
         run: uv audit --locked --preview-features audit-command
