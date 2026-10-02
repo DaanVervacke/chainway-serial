@@ -62,6 +62,8 @@ Enums
    :members:
 .. autoclass:: chainway_serial.RfLink
    :members:
+.. autoclass:: chainway_serial.LinkFrequency
+   :members:
 .. autoclass:: chainway_serial.LockMode
    :members:
 .. autoclass:: chainway_serial.LockBank
