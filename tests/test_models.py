@@ -13,6 +13,8 @@ from chainway_serial.models import (
     MemoryBank,
     OutputRoute,
     ReaderAddress,
+    Region,
+    RfLink,
     Tag,
     TagFilter,
     TriggerConfig,
@@ -98,3 +100,29 @@ def test_lock_bank_and_mode_values_match_the_sdk() -> None:
     assert LockMode.OPEN.value == 32
     assert LockMode.PERMANENTLY_LOCK.value == 48
     assert LockMode.PERMANENTLY_OPEN.value == 64
+
+
+def test_rf_link_values_match_the_protocol_document() -> None:
+    assert RfLink.PR_ASK_MILLER_8_160_KHZ.value == 0x00
+    assert RfLink.PR_ASK_MILLER_4_250_KHZ.value == 0x01
+    assert RfLink.PR_ASK_MILLER_4_320_KHZ.value == 0x02
+    assert RfLink.PR_ASK_MILLER_4_640_KHZ.value == 0x03
+    assert RfLink.PR_ASK_MILLER_2_320_KHZ.value == 0x04
+    assert RfLink.PR_ASK_MILLER_2_640_KHZ.value == 0x05
+    assert RfLink.GEN2X_MILLER_8_160_KHZ.value == 0x0A
+    assert RfLink.GEN2X_MILLER_4_250_KHZ.value == 0x0B
+    assert RfLink.GEN2X_MILLER_4_320_KHZ.value == 0x0C
+    assert RfLink.GEN2X_MILLER_4_640_KHZ.value == 0x0D
+    assert RfLink.GEN2X_MILLER_2_320_KHZ.value == 0x0E
+    assert RfLink.GEN2X_MILLER_2_640_KHZ.value == 0x0F
+
+
+def test_region_values_match_the_protocol_document() -> None:
+    assert len(Region) == 25
+    assert Region.CHINA_1.value == 0x01
+    assert Region.USA.value == 0x08
+    assert Region.JAPAN.value == 0x32
+    assert Region.SOUTH_AFRICA.value == 0x33
+    assert Region.ETSI_UPPER.value == 0x3D
+    assert Region.BAND_880_930.value == 0x43
+    assert Region.THAILAND.value == 0x45

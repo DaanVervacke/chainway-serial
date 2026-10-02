@@ -34,6 +34,10 @@ class FakeReaderLogic:
         self.gen2_payload = b"\x84\x4f\xf2\x1a"
         self.collected_payload = b"\x00\x05\x02\x06\x11\x22\x33\x44\x55\x66\x04\xaa\xbb\xcc\xdd"
         self.flash_payload = b"\x02\x06\x11\x22\x33\x44\x55\x66\x04\xaa\xbb\xcc\xdd"
+        self.device_id_payload = b"\xf1\xf2\xf3\xf4"
+        self.fixed_frequency_payload = b"\x01\x0e\x0a\x3d"
+        self.return_loss_payload = b"\x01\x12\x02\x01\x03\x00\x04\x00"
+        self.authenticate_payload = b"\x01\x00\x00\x08" + bytes(range(16))
         self.idle_sleep_time = 0x0A
         self.single_inventory_payload = b"\x30\x00" + bytes(range(1, 13)) + b"\xfe\xd6\x00"
         self.read_tag_payload = b"\x01\x00\x00\x02\x11\x22\x33\x44"
@@ -61,16 +65,18 @@ class FakeReaderLogic:
         self._responders: dict[int, Responder] = {
             Command.GET_VERSION: lambda _payload: self.version_payload,
             Command.STM32_VERSION: lambda _payload: b"\x01\x00\x01",
-            Command.MODULE_VERSION: lambda _payload: b"\x00\x01\x02",
+            Command.HARDWARE_VERSION: lambda _payload: b"\x00\x01\x02",
+            Command.GET_DEVICE_ID: lambda _payload: self.device_id_payload,
             Command.GET_TEMPERATURE: lambda _payload: self.temperature_payload,
             Command.ANTENNA_CONNECTION_STATE: lambda _payload: self.antenna_state_payload,
             Command.SET_POWER: lambda _payload: b"\x01",
             Command.GET_POWER: lambda _payload: self.power_payload,
             Command.SET_FIXED_FREQUENCY: lambda _payload: b"\x01",
+            Command.GET_FIXED_FREQUENCY: lambda _payload: self.fixed_frequency_payload,
             Command.SET_REGION: lambda _payload: b"\x01",
             Command.GET_REGION: lambda _payload: b"\x01\x08",
             Command.SET_CARRIER_WAVE: lambda _payload: b"\x01",
-            Command.GET_CARRIER_WAVE: lambda _payload: b"\x01\x01",
+            Command.GET_RETURN_LOSS: lambda _payload: self.return_loss_payload,
             Command.SET_GEN2_PARAMETERS: lambda _payload: b"\x01",
             Command.GET_GEN2_PARAMETERS: lambda _payload: self.gen2_payload,
             Command.SET_RF_LINK: lambda _payload: b"\x01",
@@ -89,12 +95,15 @@ class FakeReaderLogic:
             Command.GET_ANTENNA_WORK_TIME: self._respond_antenna_work_time,
             Command.SET_FAST_INVENTORY_MODE: lambda _payload: b"\x01",
             Command.GET_FAST_INVENTORY_MODE: lambda _payload: b"\x01\x01",
-            Command.SOFT_RESET: lambda _payload: b"\x01",
+            Command.SOFTWARE_RESET: lambda _payload: b"\x01",
+            Command.RESTORE_FACTORY_SETTINGS: lambda _payload: b"\x01",
             Command.SINGLE_INVENTORY: lambda _payload: self.single_inventory_payload,
             Command.READ_TAG: self._respond_read_tag,
+            Command.AUTHENTICATE_TAG: self._respond_authenticate,
             Command.WRITE_TAG: lambda _payload: self._tag_result(Command.WRITE_TAG),
             Command.BLOCK_WRITE_TAG: lambda _payload: self._tag_result(Command.BLOCK_WRITE_TAG),
             Command.BLOCK_ERASE_TAG: lambda _payload: self._tag_result(Command.BLOCK_ERASE_TAG),
+            Command.BLOCK_PERMALOCK_TAG: self._respond_block_permalock,
             Command.LOCK_TAG: lambda _payload: self._tag_result(Command.LOCK_TAG),
             Command.KILL_TAG: lambda _payload: self._tag_result(Command.KILL_TAG),
             Command.READ_COLLECTED_TAGS: lambda _payload: self.collected_payload,
@@ -217,6 +226,21 @@ class FakeReaderLogic:
         if Command.READ_TAG in self.failing_tag_commands:
             return b"\x01\x01"
         return self.read_tag_payload
+
+    def _respond_authenticate(self, _payload: bytes) -> bytes:
+        if Command.AUTHENTICATE_TAG in self.failing_tag_commands:
+            return b"\x01\x01"
+        return self.authenticate_payload
+
+    def _respond_block_permalock(self, payload: bytes) -> bytes:
+        if Command.BLOCK_PERMALOCK_TAG in self.failing_tag_commands:
+            return b"\x01\x01"
+        mask_bytes = ((payload[7] << 8 | payload[8]) + 7) // 8
+        offset = 9 + mask_bytes
+        if payload[offset]:
+            return b"\x01\x00"
+        block_range = payload[offset + 4] << 8 | payload[offset + 5]
+        return b"\x01\x00" + b"\xf0\x00" * block_range
 
     def _tag_result(self, command: Command) -> bytes:
         if command in self.failing_tag_commands:

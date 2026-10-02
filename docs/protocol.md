@@ -8,7 +8,7 @@ Sources:
 - Java `ReaderAPI20240822.jar`, decompiled with jadx. Frame builder: `com/rscja/deviceapi/i.java`, UR4 overrides in `j.java`. Tag record parser and batch format: `com/rscja/deviceapi/b.java`. Hardcoded ready-made frames: `com/rscja/deviceapi/d.java`.
 - Windows `UHFAPI.dll` interface document `RFID_API_DLL_V1.0.1.doc`, converted to text. Command semantics, parameter units and value ranges. The C header `UHFAPI.h` and import library ship in the same archive.
 - `libTagReader.so`, the Linux native counterpart of the DLL, extracted from the Java archive with debug symbols intact. Its frame builder and receiver independently confirm the wire format, and the receiver also accepts the `C8 8C` header and a 4096 byte length window.
-- `UHF_Application_Protocol_V2.1.2.pdf`, the vendor's official wire protocol document for the UHF module, tracked at the repository root. It confirms the frame format and the module-level command subset, and documents the phase reporting inventory mode.
+- `UHF_Application_Protocol_V2.1.2.pdf`, the vendor's official wire protocol document for the UHF module, tracked at the repository root. It confirms the frame format, documents the phase reporting inventory mode, the region and RF link tables, and is the only source for the module-level commands 0x04, 0x16, 0x26, 0x68, 0x8E and 0x9F.
 - Java and C# demo applications shipped in the three RAR archives at the repository root.
 
 Where the Android AAR and the Java jar disagree on a payload byte, the Windows DLL document usually explains it: the byte is a save flag, 0 for settings that survive until power off and 1 for settings stored persistently. The AAR tends to send 0, the jar tends to send 1. Both are valid wire encodings.
@@ -53,6 +53,13 @@ Worked examples:
 | Kill tag, see 0x8A | `A5 5A 00 11 8A 12 34 56 78 01 00 00 00 00 92 0D 0A` | XOR over length, command and payload |
 | Set tag filter, see 0x6E | `A5 5A 00 10 6E 00 01 00 20 00 10 12 34 69 0D 0A` | XOR over length, command and payload |
 | Read collected tags, see 0xE0 | `A5 5A 00 08 E0 E8 0D 0A` | 00 ^ 08 ^ E0 = E8 |
+| Get device ID | `A5 5A 00 08 04 0C 0D 0A` | 00 ^ 08 ^ 04 = 0C |
+| Get fixed frequency | `A5 5A 00 08 16 1E 0D 0A` | 00 ^ 08 ^ 16 = 1E |
+| Get return loss | `A5 5A 00 08 26 2E 0D 0A` | 00 ^ 08 ^ 26 = 2E |
+| Software reset | `A5 5A 00 08 68 60 0D 0A` | 00 ^ 08 ^ 68 = 60 |
+| Restore factory settings | `A5 5A 00 08 74 7C 0D 0A` | 00 ^ 08 ^ 74 = 7C |
+| Authenticate tag, see 0x8E | `A5 5A 00 1D 8E 00 00 00 00 01 00 00 00 00 0B 00 00 01 02 03 04 05 06 07 08 09 98 0D 0A` | XOR over length, command and payload |
+| Block permalock, see 0x9F | `A5 5A 00 23 9F 00 00 00 00 02 00 00 00 60 E2 00 34 14 01 33 01 00 10 38 D2 B5 00 03 00 00 00 01 62 0D 0A` | XOR over length, command and payload |
 
 Reading a frame from a stream: read 4 bytes, take the total length from bytes 2 and 3, read `length - 4` more bytes, verify the XOR and the `0D 0A` tail. Do not hunt for the `0D 0A` tail with a delimiter read, because tag payloads can contain that byte pair.
 
@@ -62,7 +69,7 @@ Receiver state machine, as implemented by the SDKs: hunt for `A5`, expect `5A`, 
 
 - A response frame carries command = request command + 1. Request 0x02, response 0x03. Request 0x8C, response 0x8D.
 - Set operations answer with payload `01` on success. Set operations that report an error code answer with a non-`01` payload, exact codes **unverified**.
-- Tag operations answer with payload `01 00` on success. Anything else starting with `01` is a failure, exact codes **unverified**.
+- Tag operations answer with payload `01 00` on success. The second byte is the error flag: `01` means the operation failed and `22` means the tag could not be recognized, per the official protocol document. Other codes are **unverified**.
 - Commands in the 0xA1 configuration family carry a subcommand in payload byte 0. Set operations answer with payload `01`. Get operations echo the subcommand number in payload byte 0, followed by the requested values.
 - Commands 0x06 and 0x70 carry an operation selector in payload byte 0, see the tables below.
 - The SDKs wait up to 2000 ms for a response.
@@ -83,9 +90,10 @@ The Android SDK connection managers send a heartbeat only after 5 seconds of inb
 |---|---|---|---|
 | 0x02 | empty | 0x03, payload `maj min patch` | Firmware version, printed as V<maj>.<min>.<patch>. The Android SDK renames known majors: 3 = E310, 5 = E510, 7 = E710 |
 | 0xC8 | empty | 0xC9, payload `maj min patch` | STM32 microcontroller version, digits are raw values, printed as V<maj>.<min>.<patch> |
-| 0x00 | empty | 0x01, payload `maj min patch` | SDK firmware version of the module, printed as V<maj>.<min>.<patch> |
-| 0x34 | empty | 0x35, payload `01 hi lo` | Reader temperature. Value = 16-bit big-endian / 100 in degrees C. If `hi >= 0xF0` the value is negative: -(65535 - raw) / 100. The DLL document claims Fahrenheit, the two Java SDKs parse centigrade |
-| 0x4E | empty | 0x4F, payload 2 bytes | Antenna connection state. Second byte is a bitmask, bit 0 = ANT1 through bit 7 = ANT8. First byte meaning **unverified** |
+| 0x00 | empty | 0x01, payload `maj min patch` | Hardware version of the module, printed as V<maj>.<min>.<patch>. On an Ex10 module this is the version of the Ex10 chip, per the official protocol document |
+| 0x04 | empty | 0x05, payload 4 bytes | Module ID, for example `F1 F2 F3 F4` |
+| 0x34 | empty | 0x35, payload `01 hi lo` | Reader temperature. Value = 16-bit big-endian / 100 in degrees C, negative numbers are two's complement, per the official protocol document. The two Java SDKs instead treat `hi >= 0xF0` as negative and compute `(raw - 65535) / 100`, which differs by 0.01 degrees. The DLL document claims Fahrenheit, the two Java SDKs parse centigrade |
+| 0x4E | empty | 0x4F, payload 2 bytes | Antenna connection state, a 16-bit mask: bit 0 = ANT1 through bit 15 = ANT16, per the official protocol document |
 | 0xE4 sub 01 | `01` | 0xE5, payload `01 pct` | Battery charge percentage |
 
 ### RF power
@@ -94,21 +102,22 @@ Power values on the wire are centi-dBm, big-endian, so 30 dBm = 0x0BB8.
 
 | Command | Request payload | Response | Meaning |
 |---|---|---|---|
-| 0x10 | `02` then per antenna: `ant readHi readLo writeHi writeLo` | 0x11, payload `01` | Set RF power per antenna. `ant` is 1-based, read power and write power in centi-dBm each. The single-antenna call sends `02 01 hi lo hi lo`. The leading `02` is constant, meaning **unverified** |
+| 0x10 | `status` then per antenna: `ant readHi readLo writeHi writeLo` | 0x11, payload `01` | Set RF power per antenna. `ant` is 1-based, read power and write power in centi-dBm each. The single-antenna call sends `02 01 hi lo hi lo`. The status byte carries the save flag in bit 1, per the official protocol document: 0x02 stores the power across a power cycle, 0x00 keeps it until power off. Read power is reserved on the module and carries no meaning |
 | 0x12 | empty | 0x13, payload `00` then per antenna: `ant readHi readLo writeHi writeLo` | Get RF power for every antenna. Both SDKs read the value from bytes 2 and 3, which is the read power of the first antenna |
 
 ### RF configuration
 
 | Command | Request payload | Response | Meaning |
 |---|---|---|---|
-| 0x14 | `01 f2 f1 f0` | 0x15, payload `01` | Set fixed frequency, value in kHz, 3-byte big-endian, for example 920125 |
-| 0x2C | `save region` | 0x2D, payload `01` | Set frequency region. `save` 0 or 1. Region: 0x01 China1, 0x02 China2, 0x04 Europe, 0x08 USA, 0x16 Korea, 0x32 Japan |
+| 0x14 | `01 f2 f1 f0` | 0x15, payload `01` | Set fixed frequency, value in kHz, 3-byte big-endian, for example 920125. The leading `01` is the number of frequency points, only one is supported |
+| 0x16 | empty | 0x17, payload `count` then `count` times 3 bytes | Get the fixed frequency table, values in kHz, 3-byte big-endian |
+| 0x2C | `save region` | 0x2D, payload `01` | Set frequency region. `save` 0 or 1. Region: see the table below |
 | 0x2E | empty | 0x2F, payload `01 region` | Get frequency region |
 | 0x24 | `on` | 0x25, payload `01` | Set continuous carrier wave, 0 off, 1 on |
-| 0x26 | empty | 0x27, payload `on` | Get continuous carrier wave state. Both SDKs read payload byte 0 as the state and do not check the length, so the response length is **unverified** |
+| 0x26 | empty | 0x27, payload `port loss` pairs | Get the return loss of every port in dB, one port number and one loss byte per port. A loss of 0 means the port is not enabled, or has no antenna connected on a single-port module. Both Java SDKs read payload byte 0 of this response as a carrier wave on/off state, which is the port-1 number of the return loss layout, so this library follows the official protocol document. **unverified** |
 | 0x20 | 4 bytes, see below | 0x21, payload `01` | Set Gen2 parameters |
 | 0x22 | empty | 0x23, payload 4 bytes | Get Gen2 parameters, same packing as the request |
-| 0x52 | `00 save mode` | 0x53, payload `01` | Set recommended RF link combination. Mode: 0 DSB_ASK/FM0/40kHz, 1 PR_ASK/Miller4/250kHz, 2 PR_ASK/Miller4/300kHz, 3 DSB_ASK/FM0/400kHz. Leading `00` constant, meaning **unverified** |
+| 0x52 | `00 save mode` | 0x53, payload `01` | Set recommended RF link combination. Mode: see the table below. Leading `00` constant, meaning **unverified** |
 | 0x54 | `00 00` | 0x55, payload `01 00 mode` | Get RF link combination |
 | 0x5C | `enable 00` | 0x5D, payload `01` | Set FastID, 0 off, 1 on. Trailing `00` constant |
 | 0x5E | `00 00` | 0x5F, payload `01 enable` | Get FastID state |
@@ -117,9 +126,39 @@ Power values on the wire are centi-dBm, big-endian, so 30 dBm = 0x0BB8.
 | 0x06 | `00 type` | 0x07, payload `00 01` | Set protocol type. Type: 0 ISO18000-6C, 1 GB/T29768, 2 GJB7377.1 |
 | 0x06 | `01 00` | 0x07, payload `01 type` | Get protocol type |
 | 0x30 | `01 value` | 0x31 | Set power-on dynamic configuration, semantics **unverified**, the Android SDK ships no response parser |
-| 0x64 | `01 enable 00` | 0x65, payload `01` | Set fast inventory mode, semantics **unverified** |
+| 0x64 | `save enable 00` | 0x65, payload `01` | Set fast inventory mode. `save` 0 or 1, semantics of the mode **unverified** |
 | 0x66 | `00 00` | 0x67, payload `01 enable` | Get fast inventory mode |
-| 0x74 | empty | 0x75, payload `01` | Soft reset of the UHF module |
+| 0x68 | empty | 0x69, payload `01` | Software reset of the UHF module, the official protocol document's module-level reset |
+| 0x74 | empty | 0x75, payload `01` | Restore factory settings. The official protocol document defines 0x74 as the factory reset, the SDKs call the same opcode the soft reset. Which behavior the UR4 firmware implements is **unverified** |
+
+Frequency regions, from the official protocol document:
+
+| Region | Value | Region | Value |
+|---|---|---|---|
+| China1 | 0x01 | Sri Lanka | 0x38 |
+| China2 | 0x02 | Azerbaijan | 0x39 |
+| Europe | 0x04 | Iran | 0x3A |
+| USA | 0x08 | Malaysia | 0x3B |
+| Korea | 0x16 | Brazil | 0x3C |
+| Japan | 0x32 | ETSI_UPPER | 0x3D |
+| South Africa | 0x33 | Australia | 0x3E |
+| Taiwan | 0x34 | Indonesia | 0x3F |
+| Vietnam | 0x35 | Israel | 0x40 |
+| Peru | 0x36 | Hong Kong | 0x41 |
+| Russia | 0x37 | New Zealand | 0x42 |
+| Singapore | 0x44 | 880MHz-930MHz | 0x43 |
+| Thailand | 0x45 | | |
+
+RF link combinations, from the official protocol document. The DLL document names 0x00 to 0x03 differently: DSB_ASK/FM0/40kHz, PR_ASK/Miller4/250kHz, PR_ASK/Miller4/300kHz and DSB_ASK/FM0/400kHz. The values match, the names do not. Per the official document 0x01 is the best performance for R2000 modules and 0x02 for Ex10 modules, and the Gen2X combinations only support the latest Impinj tags such as M830 and M850:
+
+| Value | Combination | Value | Combination |
+|---|---|---|---|
+| 0x00 | PR_ASK / Miller8 / 160kHz | 0x0A | Gen2X / Miller8 / 160kHz |
+| 0x01 | PR_ASK / Miller4 / 250kHz | 0x0B | Gen2X / Miller4 / 250kHz |
+| 0x02 | PR_ASK / Miller4 / 320kHz | 0x0C | Gen2X / Miller4 / 320kHz |
+| 0x03 | PR_ASK / Miller4 / 640kHz | 0x0D | Gen2X / Miller4 / 640kHz |
+| 0x04 | PR_ASK / Miller2 / 320kHz | 0x0E | Gen2X / Miller2 / 320kHz |
+| 0x05 | PR_ASK / Miller2 / 640kHz | 0x0F | Gen2X / Miller2 / 640kHz |
 
 Gen2 packing for 0x20 and 0x22, four payload bytes:
 
@@ -149,7 +188,7 @@ Semantics from the DLL document: target 0 to 4 for S0 to S3 and SL, action 0 to 
 | 0x70 | `00 00 00 00` | 0x71, payload `01` | Shorthand for mode 0 without saving |
 | 0x72 | `00 00` | 0x73, payload `01 mode userAddr userLen` | Get inventory mode |
 | 0x6E | `save bank ptrHi ptrLo cntHi cntLo data...` | 0x6F, payload `01` | Set tag filter. Bank 1 = EPC, 2 = TID, 3 = USER. `ptr` is the bit offset of the match, `cnt` the match length in bits, `data` the match bytes, ceil(cnt / 8) of them. A zero bit length clears the filter and carries no data bytes, 6 payload bytes total |
-| 0x80 | `00 64` | 0x81, one tag record | Single inventory. Returns at most one tag record in the response. Payload bytes are parameters, semantics **unverified** |
+| 0x80 | `00 64` | 0x81, one tag record | Single inventory. Returns at most one tag record in the response, and none when no tag is found. The official protocol document calls the two payload bytes reserved and its example sends `00 00`, both SDKs send `00 64` and their demos run on real hardware, so this library keeps the SDK bytes. Semantics **unverified** |
 | 0x82 | `Num1 Num0` | none, stream begins | Start continuous inventory. The official protocol document defines the two payload bytes: `00 00` for a normal scan, `FF FF` for phase reporting, where every 0x83 record carries a 2-byte phase in degrees between the EPC and the RSSI pair. The SDKs always send `00 00`. A third-party Node client sends `27 10`, meaning **unverified** |
 | 0x8C | empty | 0x8D, payload `01` | Stop continuous inventory |
 | 0x83 | reader to host only | n/a | One tag sighting per frame, pushed while inventory runs |
@@ -169,7 +208,9 @@ password(4) | bank(1) | ptrHi ptrLo | cntHi cntLo | data(ceil(cnt/8)) | operatio
 | 0x93 | `bank addrHi addrLo lenHi lenLo data(len*2)` | 0x94, payload `01 00` | Block write, same layout as write |
 | 0x95 | `bank addrHi addrLo lenHi lenLo` | 0x96, payload `01 00` | Block erase, `len` in words |
 | 0x88 | `lockCode(3)` | 0x89, payload `01 00` | Lock tag memories, see the lock code table |
-| 0x8A | none | 0x8B, payload `01 00` | Kill tag, the password is the kill password |
+| 0x8A | none | 0x8B, payload `01 00` | Kill tag, the password is the kill password. A tag with a zero kill password ignores the command |
+| 0x8E | `dl keyId challenge(10)` | 0x8F, payload `01 00 lenHi lenLo data...` | Authenticate tag, the Gen2 v2.0 Authenticate command. `dl` is the length of KeyID plus Data in bytes, fixed at 11. `keyId` defaults to 0. `challenge` is the ten-byte IChallenge_TAM1 data. The response carries 8 words (16 bytes) of data on success, no data on failure. Only tags that support the command respond |
+| 0x9F | `readLock bank ptrHi ptrLo rangeHi rangeLo [maskHi maskLo]` | 0xA0, payload `01 00 [data...]` | Block permalock operation. `readLock` bit 0 is 0 for a read and 1 for a permalock. `ptr` is the block start address in windows of 16 blocks of 8 bytes, `range` the number of windows. The 16-bit mask selects which of the 16 blocks of a window to permalock. The document's worked example omits the mask for the read form, so the mask bytes on the permalock form are **unverified**. A read response carries `range` words of per-block status bits after the flags, a permalock response carries none. Only tags that support the command respond |
 
 ### Lock code
 
@@ -286,13 +327,16 @@ The shared SDK code bases carry commands for other Chainway products. They are d
 |---|---|---|---|
 | 0xE5 | `04 mode` | 0xE6, payload `01` | R6 work mode |
 
-## Module-level protocol deltas
+## Module-level protocol
 
-The official protocol document V2.1.2 describes the UHF module protocol, one layer below the reader protocol this library implements. The frame format and the tag operation commands are shared. The deltas:
+The official protocol document V2.1.2 describes the UHF module protocol, one layer below the reader protocol. The frame format and the tag operation commands are shared, and this library implements the module-level command subset next to the reader protocol. The commands below appear in the document but in none of the two Java SDKs, so whether the UR4 reader firmware forwards them is **unverified**: get device ID (0x04), get fixed frequency (0x16), get return loss (0x26), software reset (0x68), authenticate tag (0x8E) and block permalock (0x9F).
+
+The deltas between the two layers:
 
 - The document's examples all use the `C8 8C` header.
-- At module level 0x68 is the soft reset and 0x74 the factory reset, while the reader protocol uses 0x74 for the soft reset.
+- At module level 0x68 is the software reset and 0x74 the factory reset, while the SDKs know only 0x74 and call it the soft reset. The library implements both commands per the document. Which behavior the UR4 firmware implements for 0x74 is **unverified**
 - Tag operation error responses carry an error flag after the success flag: 0x01 means the operation failed and 0x22 means the tag could not be recognized.
+- The document defines 0x26 as get return loss. Both Java SDKs read the first payload byte of the 0x27 response as a carrier wave on/off state, which is the port-1 number of the return loss layout. The library follows the document.
 - Commands 0xA1 through 0xFF are reserved at module level. The reader protocol uses them: the 0xA1 configuration family, the 0xE4 peripherals and the 0xE0 collected tag pull exist only at reader level.
 
 ## Third-party implementations
@@ -318,7 +362,7 @@ PC(2) | EPC(...) | TID(12, optional) | USER(..., optional) | RSSI(2) | ANT(1)
 - TID is present as a fixed 12-byte block when the inventory mode includes TID
 - USER data follows TID when the mode includes it. The SDKs treat more than 3 bytes after the TID block as the marker for a present USER block
 - Without a TID block the RSSI pair and the antenna byte sit directly after the EPC, the SDKs have no short TID block
-- RSSI: 16-bit big-endian. dBm = (raw - 65535) / 10 in the SDK reading, so raw 0xFED6 = -29.7 dBm, and the official document words the same arithmetic as two's complement, which differs by 0.1 dBm. The SDKs treat values where 65535 - raw >= 2000 as invalid
+- RSSI: 16-bit big-endian two's complement of dBm times ten, so raw 0xFD6F = -65.7 dBm, matching the official document's worked example. The SDKs compute (raw - 65535) / 10 instead, which differs by 0.1 dBm. The SDKs treat values outside a 20 dBm span as invalid, and so does this library
 - ANT: 1-byte antenna index, 0-based
 - Phase: in phase reporting mode, started with the `FF FF` payload, a 2-byte big-endian phase in degrees, 0 to 360, sits between the body and the RSSI pair. The documented shape carries it after the EPC, the position with TID or USER blocks present is inferred. **Unverified**
 
@@ -362,9 +406,8 @@ Set with 0xA1 sub 05.
 - 0x80 single inventory payload bytes `00 64`: first byte is likely an antenna or mode selector, 100 is likely a duration. Untested on hardware
 - Whether the reader enforces the heartbeat or keepalive intervals, or whether they are purely client-side library behavior
 - Whether a 0x83 frame can carry more than one record. Both pure-Java SDKs parse exactly one record per frame, and the 0xE0 batch exists for the multi-record case
-- First byte of the 0x4F antenna state response
-- Error payload values beyond `01`, `01 00` and the documented 0x22 tag-unrecognized flag, no SDK decodes them
-- The meaning of the leading `02` in the 0x10 set power payload and the leading `00` in the 0x52 RF link payload
+- Error payload values beyond `01`, `01 00` and the documented `01` and `22` tag error flags, no SDK decodes them
+- The meaning of the leading `00` in the 0x52 RF link payload
 - The 0x4A work time save flag reading, inferred from the AAR and jar disagreement
 - The 0xE2 request tail
 - The 0xF0 user settings semantics beyond the shapes listed above
@@ -375,6 +418,9 @@ Set with 0xA1 sub 05.
 - The 4096 versus 2048 length window: the Java SDKs cap at 2048, the native library at 4096
 - The phase reporting record layout with TID or USER blocks present, inferred from the documented EPC-only shape
 - The `27 10` start inventory payload seen in a third-party client
+- Whether the UR4 reader firmware forwards the module-level commands 0x04, 0x16, 0x26, 0x68, 0x8E and 0x9F, which appear in the official protocol document but in no Java SDK
+- Whether 0x74 factory-resets or soft-resets the UR4, the document and the SDKs name the same opcode differently
+- The block permalock mask bytes on the permalock form, inferred from the document's read-only worked example
 - RS-485 variants, if the specific unit has one: half-duplex direction control is outside the protocol
 
 ## Decompiled source locations

@@ -14,6 +14,7 @@ from chainway_serial.models import (
     LockMode,
     MemoryBank,
     ReaderAddress,
+    ReturnLoss,
     TagFilter,
 )
 from chainway_serial.parsers import (
@@ -25,13 +26,18 @@ from chainway_serial.parsers import (
     pack_gen2_parameters,
     parse_antenna_connection_state,
     parse_collected_tags,
+    parse_device_id,
+    parse_fixed_frequency,
     parse_flash_tags,
     parse_power_records,
     parse_reader_address,
+    parse_return_loss,
     parse_tag_record,
     parse_temperature,
     parse_version,
+    parse_word_data,
     unpack_gen2_parameters,
+    validate_block_window,
     validate_word_window,
 )
 
@@ -47,7 +53,7 @@ def test_parse_temperature_positive() -> None:
 
 
 def test_parse_temperature_negative() -> None:
-    assert parse_temperature(b"\x01\xff\x38") == -1.99
+    assert parse_temperature(b"\x01\xff\x38") == -2.0
 
 
 def test_parse_temperature_rejects_a_foreign_payload() -> None:
@@ -57,7 +63,12 @@ def test_parse_temperature_rejects_a_foreign_payload() -> None:
 
 def test_parse_antenna_connection_state() -> None:
     state = parse_antenna_connection_state(b"\x00\x05")
-    assert state == (True, False, True, False, False, False, False, False)
+    assert state == (True, False, True, False, False, False, False, False) + (False,) * 8
+
+
+def test_parse_antenna_connection_state_high_byte() -> None:
+    state = parse_antenna_connection_state(b"\x20\x00")
+    assert state == (False,) * 13 + (True,) + (False,) * 2
 
 
 def test_parse_power_records() -> None:
@@ -77,6 +88,7 @@ def test_parse_power_records_rejects_a_partial_record() -> None:
 def test_build_power_payload() -> None:
     assert build_power_payload(1, 30.0, 30.0) == b"\x02\x01\x0b\xb8\x0b\xb8"
     assert build_power_payload(2, 20.0, 25.5) == b"\x02\x02\x07\xd0\x09\xf6"
+    assert build_power_payload(1, 30.0, 30.0, save=False) == b"\x00\x01\x0b\xb8\x0b\xb8"
 
 
 def test_build_power_payload_rejects_a_bad_antenna() -> None:
@@ -91,7 +103,7 @@ def test_parse_tag_record_epc_only() -> None:
     assert tag.epc == bytes(range(1, 13))
     assert tag.tid is None
     assert tag.user_data is None
-    assert tag.rssi == -29.7
+    assert tag.rssi == -29.8
     assert tag.antenna == 2
     assert tag.received_at == RECEIVED_AT
 
@@ -108,7 +120,7 @@ def test_parse_tag_record_with_tid_and_user() -> None:
     tag = parse_tag_record(record, with_antenna=True, received_at=RECEIVED_AT)
     assert tag.tid == bytes(range(13, 25))
     assert tag.user_data == b"\xaa\xbb"
-    assert tag.rssi == -29.7
+    assert tag.rssi == -29.8
     assert tag.antenna == 0
 
 
@@ -116,7 +128,7 @@ def test_parse_tag_record_without_antenna() -> None:
     record = b"\x30\x00" + bytes(range(1, 13)) + b"\xfe\xd6"
     tag = parse_tag_record(record, with_antenna=False, received_at=RECEIVED_AT)
     assert tag.antenna is None
-    assert tag.rssi == -29.7
+    assert tag.rssi == -29.8
 
 
 def test_parse_tag_record_without_tid_reads_rssi_after_the_epc() -> None:
@@ -148,7 +160,7 @@ def test_parse_tag_record_tid_and_rssi_without_antenna() -> None:
     tag = parse_tag_record(record, with_antenna=True, received_at=RECEIVED_AT)
     assert tag.tid == bytes(range(13, 25))
     assert tag.user_data is None
-    assert tag.rssi == -29.7
+    assert tag.rssi == -29.8
     assert tag.antenna is None
 
 
@@ -157,7 +169,7 @@ def test_parse_tag_record_batch_user_without_antenna() -> None:
     tag = parse_tag_record(record, with_antenna=False, received_at=RECEIVED_AT)
     assert tag.tid == bytes(range(13, 25))
     assert tag.user_data == b"\xaa\xbb"
-    assert tag.rssi == -29.7
+    assert tag.rssi == -29.8
     assert tag.antenna is None
 
 
@@ -173,6 +185,18 @@ def test_parse_tag_record_invalid_rssi_is_none() -> None:
     record = b"\x30\x00" + bytes(range(1, 13)) + b"\x00\x05\x00"
     tag = parse_tag_record(record, with_antenna=True, received_at=RECEIVED_AT)
     assert tag.rssi is None
+
+
+def test_parse_tag_record_rssi_outside_the_validity_window_is_none() -> None:
+    record = b"\x30\x00" + bytes(range(1, 13)) + b"\x90\x00\x02"
+    tag = parse_tag_record(record, with_antenna=True, received_at=RECEIVED_AT)
+    assert tag.rssi is None
+
+
+def test_parse_tag_record_rssi_matches_the_documented_example() -> None:
+    record = b"\x30\x00" + bytes(range(1, 13)) + b"\xfd\x6f\x02"
+    tag = parse_tag_record(record, with_antenna=True, received_at=RECEIVED_AT)
+    assert tag.rssi == -65.7
 
 
 def test_parse_tag_record_rejects_a_short_record() -> None:
@@ -245,7 +269,7 @@ def test_parse_tag_record_phase_mode_epc_only() -> None:
     tag = parse_tag_record(record, with_antenna=True, received_at=RECEIVED_AT, with_phase=True)
     assert tag.epc == bytes.fromhex("e2c45566a5030060705db2c7")
     assert tag.phase == 59
-    assert tag.rssi == -31.1
+    assert tag.rssi == -31.2
     assert tag.antenna == 1
 
 
@@ -253,7 +277,7 @@ def test_parse_tag_record_phase_mode_without_antenna() -> None:
     record = b"\x34\x00" + bytes.fromhex("e2c45566a5030060705db2c7") + b"\x00\x3b\xfe\xc8"
     tag = parse_tag_record(record, with_antenna=False, received_at=RECEIVED_AT, with_phase=True)
     assert tag.phase == 59
-    assert tag.rssi == -31.1
+    assert tag.rssi == -31.2
     assert tag.antenna is None
 
 
@@ -271,7 +295,7 @@ def test_parse_tag_record_phase_mode_with_tid_and_user() -> None:
     assert tag.tid == bytes(range(13, 25))
     assert tag.user_data == b"\xaa\xbb"
     assert tag.phase == 59
-    assert tag.rssi == -29.7
+    assert tag.rssi == -29.8
     assert tag.antenna == 0
 
 
@@ -404,3 +428,71 @@ def test_inventory_mode_config_validation() -> None:
     assert config.mode is InventoryMode.EPC_TID_USER
     with pytest.raises(ValueError, match="user_address"):
         InventoryModeConfig(mode=InventoryMode.EPC, user_address=256, user_length=0)
+
+
+def test_parse_device_id() -> None:
+    assert parse_device_id(b"\xf1\xf2\xf3\xf4") == b"\xf1\xf2\xf3\xf4"
+
+
+def test_parse_device_id_rejects_a_foreign_length() -> None:
+    with pytest.raises(ChainwayResponseError, match="device ID"):
+        parse_device_id(b"\xf1\xf2\xf3")
+
+
+def test_parse_fixed_frequency() -> None:
+    assert parse_fixed_frequency(b"\x01\x0e\x0a\x3d") == (920125,)
+
+
+def test_parse_fixed_frequency_multiple_points() -> None:
+    assert parse_fixed_frequency(b"\x02\x0e\x0a\x3d\x0e\x0a\x63") == (920125, 920163)
+
+
+def test_parse_fixed_frequency_rejects_a_count_mismatch() -> None:
+    with pytest.raises(ChainwayResponseError, match="fixed frequency"):
+        parse_fixed_frequency(b"\x02\x0e\x0a\x3d")
+
+
+def test_parse_fixed_frequency_rejects_an_empty_payload() -> None:
+    with pytest.raises(ChainwayResponseError, match="fixed frequency"):
+        parse_fixed_frequency(b"")
+
+
+def test_parse_return_loss() -> None:
+    assert parse_return_loss(b"\x01\x12\x02\x01\x03\x00\x04\x00") == (
+        ReturnLoss(port=1, loss_db=18),
+        ReturnLoss(port=2, loss_db=1),
+        ReturnLoss(port=3, loss_db=0),
+        ReturnLoss(port=4, loss_db=0),
+    )
+
+
+def test_parse_return_loss_empty_payload() -> None:
+    assert parse_return_loss(b"") == ()
+
+
+def test_parse_return_loss_rejects_an_odd_payload() -> None:
+    with pytest.raises(ChainwayResponseError, match="return loss"):
+        parse_return_loss(b"\x01\x12\x02")
+
+
+def test_parse_word_data() -> None:
+    assert parse_word_data(b"\x01\x00\x00\x02\x11\x22\x33\x44", "read") == b"\x11\x22\x33\x44"
+
+
+def test_parse_word_data_rejects_a_short_payload() -> None:
+    with pytest.raises(ChainwayResponseError, match="at least 4 bytes"):
+        parse_word_data(b"\x01\x00\x00", "read")
+
+
+def test_parse_word_data_rejects_truncated_data() -> None:
+    with pytest.raises(ChainwayResponseError, match="promised"):
+        parse_word_data(b"\x01\x00\x00\x04\x11\x22", "read")
+
+
+def test_validate_block_window() -> None:
+    validate_block_window(0, 1)
+    validate_block_window(0xFFFF, 0xFFFF)
+    with pytest.raises(ValueError, match="block pointer"):
+        validate_block_window(-1, 1)
+    with pytest.raises(ValueError, match="block range"):
+        validate_block_window(0, 0)

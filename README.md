@@ -33,19 +33,19 @@ asyncio.run(main())
 | Area | Coverage |
 |---|---|
 | Transports | Any serialx URL: device paths, `socket://`, `rfc2217://`, ESPHome proxies |
-| Status | Firmware, STM32 and module versions, temperature, antenna connection state, battery |
-| RF | Per-antenna read and write power, region, fixed frequency, Gen2 parameters, RF link, FastID, TagFocus, carrier wave |
-| Inventory | Mode selection, tag filter, single and continuous inventory, tag callbacks |
-| Tag operations | Read, write, block write, block erase, lock, kill, with tag filters |
+| Status | Firmware, STM32 and hardware versions, device ID, temperature, return loss, antenna connection state, battery |
+| RF | Per-antenna read and write power, region, fixed frequency, Gen2 parameters, RF link, FastID, TagFocus, fast inventory mode, carrier wave |
+| Inventory | Mode selection, tag filter, single and continuous inventory with phase reporting, tag callbacks |
+| Tag operations | Read, write, block write, block erase, lock, kill, authenticate, block permalock, with tag filters |
 | Collected tags | Batch pull, counts, delete, flash pull, for auto and trigger work modes |
-| Configuration | Reader and destination addresses, work modes, trigger timing, buzzer, volume, GPO, antennas |
+| Configuration | Reader and destination addresses, work modes, trigger timing, buzzer, volume, GPO, antennas, software and factory reset |
 | Peripherals | Barcode imager, buzzer, LED |
 | Firmware | Bootloader jump and the update block flow |
 | Discovery | UDP discovery broadcast listener |
 
 ## Protocol status
 
-The wire protocol is reverse engineered from the vendor Android, Java and Windows SDKs. No command has been verified against live hardware yet. The complete byte level reference, with every decoded payload layout and the unverified items, lives in [docs/protocol.md](docs/protocol.md). When a reader is available, `uv run python scripts/probe_chainway.py socket://192.168.99.200:8888` exercises every command and writes the responses to `captures/`.
+The wire protocol is reverse engineered from the vendor Android, Java and Windows SDKs, cross-checked against the vendor's official protocol document. Every command of the document is implemented, including its module-level subset. No command has been verified against live hardware yet. The complete byte level reference, with every decoded payload layout and the unverified items, lives in [docs/protocol.md](docs/protocol.md). When a reader is available, `uv run python scripts/probe_chainway.py socket://192.168.99.200:8888` exercises every command and writes the responses to `captures/`.
 
 While a continuous inventory runs, the reader answers no command except stop inventory. The client models this: other commands raise `ChainwayInventoryActiveError` until the scan ends.
 

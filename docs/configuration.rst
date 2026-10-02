@@ -21,10 +21,26 @@ RF behaviour
 
    await client.set_region(Region.EUROPE, save=True)
    await client.set_fixed_frequency(920_125)
+   print(await client.get_fixed_frequency())
    await client.set_rf_link(RfLink.PR_ASK_MILLER_4_250_KHZ)
    await client.set_fast_id(enabled=True)
    await client.set_tag_focus(enabled=False)
    await client.set_carrier_wave(enabled=False)
+   print(await client.get_return_loss())
+
+Power and every setting that carries a ``save`` flag store the value
+across a power cycle by default. Pass ``save=False`` to keep it until
+power off.
+
+Resets
+------
+
+Two reset commands exist, both from the official protocol document:
+
+.. code-block:: python
+
+   await client.software_reset()
+   await client.restore_factory_settings()
 
 Gen2 parameters
 ---------------

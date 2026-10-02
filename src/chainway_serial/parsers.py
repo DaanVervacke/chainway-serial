@@ -8,7 +8,10 @@ from datetime import UTC, datetime
 
 from .const import (
     ACCESS_PASSWORD_SIZE,
+    ANTENNA_COUNT,
     BATCH_MIN_PAYLOAD,
+    DEVICE_ID_SIZE,
+    FREQUENCY_BYTES,
     INVALID_RSSI_SPAN,
     MAX_ANTENNA,
     MAX_WORD_ADDRESS,
@@ -16,14 +19,15 @@ from .const import (
     MIN_ANTENNA,
     MIN_TAG_RECORD_SIZE,
     MIN_WORD_ADDRESS,
-    NEGATIVE_TEMPERATURE_THRESHOLD,
     PHASE_SIZE,
     POWER_RECORD_SIZE,
     READER_ADDRESS_LONG_SIZE,
     READER_ADDRESS_SIZE,
+    RETURN_LOSS_RECORD_SIZE,
     TID_SIZE,
     USER_BLOCK_MARGIN,
-    WORD_MAX,
+    WORD_MODULUS,
+    WORD_SIGN_BIT,
 )
 from .exceptions import ChainwayResponseError
 from .models import (
@@ -35,6 +39,7 @@ from .models import (
     LockMode,
     MemoryBank,
     ReaderAddress,
+    ReturnLoss,
     Tag,
     TagFilter,
 )
@@ -93,20 +98,45 @@ def parse_version(payload: bytes) -> FirmwareVersion:
     return FirmwareVersion(payload[0], payload[1], payload[2])
 
 
+def parse_device_id(payload: bytes) -> bytes:
+    """Return the four module ID bytes of a 0x05 response.
+
+    Raises:
+        ChainwayResponseError: The payload is not four bytes.
+    """
+    require_exact_length(payload, DEVICE_ID_SIZE, "device ID")
+    return bytes(payload)
+
+
 def parse_temperature(payload: bytes) -> float:
-    """Parse the temperature payload of a 0x35 response in degrees C."""
+    """Parse the temperature payload of a 0x35 response in degrees C.
+
+    The value is hundredths of a degree, negative numbers are two's
+    complement, as the official protocol document defines them.
+
+    Raises:
+        ChainwayResponseError: The payload does not start with the
+            status byte.
+    """
     require_status_header(payload, 3, 0x01, "temperature")
     raw = payload[1] << 8 | payload[2]
-    if payload[1] >= NEGATIVE_TEMPERATURE_THRESHOLD:
-        return -((WORD_MAX - raw) / 100)
+    if raw >= WORD_SIGN_BIT:
+        return (raw - WORD_MODULUS) / 100
     return raw / 100
 
 
 def parse_antenna_connection_state(payload: bytes) -> tuple[bool, ...]:
-    """Parse the bitmask of a 0x4F response into per-antenna flags."""
+    """Parse the 16-bit mask of a 0x4F response into per-antenna flags.
+
+    Bit 0 of the low byte is antenna 1, bit 15 of the high byte is
+    antenna 16.
+
+    Raises:
+        ChainwayResponseError: The payload is not two bytes.
+    """
     require_exact_length(payload, 2, "antenna state")
-    mask = payload[1]
-    return tuple(mask & 1 << index != 0 for index in range(8))
+    mask = payload[0] << 8 | payload[1]
+    return tuple(mask & 1 << index != 0 for index in range(ANTENNA_COUNT))
 
 
 def parse_power_records(payload: bytes) -> tuple[AntennaPower, ...]:
@@ -131,8 +161,18 @@ def parse_power_records(payload: bytes) -> tuple[AntennaPower, ...]:
     return tuple(records)
 
 
-def build_power_payload(antenna: int, read_power_dbm: float, write_power_dbm: float) -> bytes:
-    """Build the 0x10 payload: constant 02, then one record per antenna.
+def build_power_payload(
+    antenna: int,
+    read_power_dbm: float,
+    write_power_dbm: float,
+    *,
+    save: bool = True,
+) -> bytes:
+    """Build the 0x10 payload: status byte, then one antenna record.
+
+    The status byte carries the save flag in bit 1, per the official
+    protocol document. Bit 1 set stores the power across a power
+    cycle, clear keeps it until power off.
 
     Raises:
         ValueError: The antenna number or a power value is out of range.
@@ -142,8 +182,10 @@ def build_power_payload(antenna: int, read_power_dbm: float, write_power_dbm: fl
         raise ValueError(msg)
     read_centi = round(read_power_dbm * 100)
     write_centi = round(write_power_dbm * 100)
-    return b"\x02" + bytes(
+    status = 0x02 if save else 0x00
+    return bytes(
         (
+            status,
             antenna,
             read_centi >> 8 & 0xFF,
             read_centi & 0xFF,
@@ -151,6 +193,75 @@ def build_power_payload(antenna: int, read_power_dbm: float, write_power_dbm: fl
             write_centi & 0xFF,
         )
     )
+
+
+def _decode_rssi(rssi_bytes: bytes) -> float | None:
+    raw = rssi_bytes[0] << 8 | rssi_bytes[1]
+    if raw < WORD_SIGN_BIT:
+        return None
+    span = WORD_MODULUS - raw
+    if span >= INVALID_RSSI_SPAN:
+        return None
+    return -span / 10
+
+
+def parse_fixed_frequency(payload: bytes) -> tuple[int, ...]:
+    """Parse the frequency table of a 0x17 response in kHz.
+
+    The payload carries one count byte, then three big-endian bytes
+    per frequency point.
+
+    Raises:
+        ChainwayResponseError: The payload is empty or does not
+            match the count byte.
+    """
+    require_minimum_length(payload, 1, "fixed frequency")
+    count = payload[0]
+    _require(
+        len(payload) == 1 + count * FREQUENCY_BYTES,
+        f"fixed frequency payload must carry {count} three byte values,"
+        f" got {len(payload) - 1} bytes",
+    )
+    return tuple(
+        int.from_bytes(payload[1 + index * FREQUENCY_BYTES : (index + 1) * FREQUENCY_BYTES + 1])
+        for index in range(count)
+    )
+
+
+def parse_return_loss(payload: bytes) -> tuple[ReturnLoss, ...]:
+    """Parse the port and loss pairs of a 0x27 response in dB.
+
+    Raises:
+        ChainwayResponseError: The payload does not carry two bytes
+            per port.
+    """
+    _require(
+        len(payload) % RETURN_LOSS_RECORD_SIZE == 0,
+        f"return loss payload must carry {RETURN_LOSS_RECORD_SIZE} bytes per port,"
+        f" got {len(payload)}",
+    )
+    return tuple(
+        ReturnLoss(port=payload[offset], loss_db=payload[offset + 1])
+        for offset in range(0, len(payload), RETURN_LOSS_RECORD_SIZE)
+    )
+
+
+def parse_word_data(payload: bytes, name: str) -> bytes:
+    """Parse the data tail shared by the 0x85 and 0x8F responses.
+
+    The tail carries a success flag, an error flag, a word count
+    and the data.
+
+    Raises:
+        ChainwayResponseError: The payload is truncated.
+    """
+    require_minimum_length(payload, 4, name)
+    words = payload[2] << 8 | payload[3]
+    data = payload[4:]
+    if len(data) < words * 2:
+        msg = f"{name} response promised {words * 2} data bytes, got {len(data)}"
+        raise ChainwayResponseError(msg)
+    return data[: words * 2]
 
 
 def parse_tag_record(
@@ -169,7 +280,11 @@ def parse_tag_record(
     TID block the trailing block sits directly after the EPC. With
     ``with_phase`` the trailing block starts with a 2-byte phase in
     degrees, a layout the official protocol document defines for the
-    phase reporting inventory mode.
+    phase reporting inventory mode. The RSSI pair is a 16-bit
+    two's complement of dBm times ten, as the official protocol
+    document defines it, and values outside the SDK validity window
+    of 20 dBm span parse as None.
+
 
     Args:
         record: The raw record bytes: PC, then EPC, then the optional
@@ -220,9 +335,7 @@ def parse_tag_record(
             antenna = record[rssi_start + 2]
     rssi: float | None = None
     if rssi_bytes is not None:
-        span = WORD_MAX - (rssi_bytes[0] << 8 | rssi_bytes[1])
-        if 0 < span < INVALID_RSSI_SPAN:
-            rssi = -span / 10
+        rssi = _decode_rssi(rssi_bytes)
     return Tag(
         pc=record[:2],
         epc=record[2:epc_length],
@@ -468,6 +581,20 @@ def validate_word_window(word_address: int, word_count: int) -> None:
         raise ValueError(msg)
     if not 1 <= word_count <= MAX_WORD_COUNT:
         msg = f"word count must be between 1 and {MAX_WORD_COUNT}, got {word_count}"
+        raise ValueError(msg)
+
+
+def validate_block_window(block_ptr: int, block_range: int) -> None:
+    """Validate a block permalock window in 16-block windows.
+
+    Raises:
+        ValueError: The pointer or range is out of range.
+    """
+    if not MIN_WORD_ADDRESS <= block_ptr <= MAX_WORD_ADDRESS:
+        msg = f"block pointer must be within 0 to {MAX_WORD_ADDRESS}, got {block_ptr}"
+        raise ValueError(msg)
+    if not 1 <= block_range <= MAX_WORD_COUNT:
+        msg = f"block range must be between 1 and {MAX_WORD_COUNT}, got {block_range}"
         raise ValueError(msg)
 
 

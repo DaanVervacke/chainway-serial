@@ -32,14 +32,15 @@ async def test_failing_volume_ack_raises(
         await client.set_volume(5)
 
 
-async def test_carrier_wave_single_byte_response(
+async def test_return_loss_rejects_a_malformed_response(
     client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
 ) -> None:
     logic, _ = reader_server
-    logic._responders[Command.GET_CARRIER_WAVE] = lambda _payload: b"\x01"
-    assert await client.get_carrier_wave() is True
-    logic._responders[Command.GET_CARRIER_WAVE] = lambda _payload: b"\x00"
-    assert await client.get_carrier_wave() is False
+    logic._responders[Command.GET_RETURN_LOSS] = lambda _payload: b"\x01"
+    with pytest.raises(ChainwayResponseError, match="return loss"):
+        await client.get_return_loss()
+    logic._responders[Command.GET_RETURN_LOSS] = lambda _payload: b""
+    assert await client.get_return_loss() == ()
 
 
 async def test_volume_accepts_the_echoed_subcommand_ack(
@@ -86,9 +87,9 @@ async def test_failing_ack_raises(
     client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
 ) -> None:
     logic, _ = reader_server
-    logic._responders[Command.SOFT_RESET] = lambda _payload: b"\x00"
+    logic._responders[Command.RESTORE_FACTORY_SETTINGS] = lambda _payload: b"\x00"
     with pytest.raises(ChainwayResponseError, match="not acknowledged"):
-        await client.soft_reset()
+        await client.restore_factory_settings()
 
 
 async def test_failing_protocol_type_ack_raises(

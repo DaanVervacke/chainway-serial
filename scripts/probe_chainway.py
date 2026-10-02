@@ -27,7 +27,8 @@ async def probe_reader(client: ChainwayClient) -> dict[str, object]:
     results["url"] = client.url
     results["version"] = str(await client.get_version())
     results["stm32_version"] = str(await client.get_stm32_version())
-    results["module_version"] = str(await client.get_module_version())
+    results["hardware_version"] = str(await client.get_hardware_version())
+    results["device_id"] = (await client.get_device_id()).hex()
     results["temperature"] = await client.get_temperature()
     results["antenna_state"] = (await client.get_antenna_connection_state()).connected
     results["battery"] = await client.get_battery_level()
@@ -40,6 +41,10 @@ async def probe_reader(client: ChainwayClient) -> dict[str, object]:
         for power in await client.get_rf_power()
     ]
     results["region"] = (await client.get_region()).name
+    results["fixed_frequency"] = await client.get_fixed_frequency()
+    results["return_loss"] = [
+        {"port": loss.port, "loss_db": loss.loss_db} for loss in await client.get_return_loss()
+    ]
     results["gen2"] = (await client.get_gen2_parameters()).__dict__
     results["rf_link"] = (await client.get_rf_link()).name
     results["fast_id"] = await client.get_fast_id()

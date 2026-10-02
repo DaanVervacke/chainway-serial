@@ -14,6 +14,8 @@ import serialx
 from serialx import BaseSerialTransport, Parity, StopBits
 
 from .const import (
+    AUTH_CHALLENGE_SIZE,
+    AUTH_KEY_AND_DATA_SIZE,
     BARCODE_NO_READ_PAYLOAD,
     BOOTLOADER_JUMP_PAYLOAD,
     BYTE_MAX,
@@ -21,6 +23,7 @@ from .const import (
     DEFAULT_DEAD_LINK_TIMEOUT,
     DEFAULT_KEEPALIVE_INTERVAL,
     DEFAULT_RESPONSE_TIMEOUT,
+    FREQUENCY_BYTES,
     INVENTORY_KEEPALIVE_BYTE,
     INVENTORY_START_DELAY,
     MAINTENANCE_TICK,
@@ -65,6 +68,7 @@ from .models import (
     ProtocolType,
     ReaderAddress,
     Region,
+    ReturnLoss,
     RfLink,
     Tag,
     TagFilter,
@@ -83,15 +87,20 @@ from .parsers import (
     pack_gen2_parameters,
     parse_antenna_connection_state,
     parse_collected_tags,
+    parse_device_id,
+    parse_fixed_frequency,
     parse_flash_tags,
     parse_power_records,
     parse_reader_address,
+    parse_return_loss,
     parse_tag_record,
     parse_temperature,
     parse_version,
+    parse_word_data,
     require_minimum_length,
     require_status_header,
     unpack_gen2_parameters,
+    validate_block_window,
     validate_word_window,
 )
 from .protocol import ChainwayProtocol
@@ -275,10 +284,18 @@ class ChainwayClient:
         payload = await self._request(Command.STM32_VERSION)
         return parse_version(payload)
 
-    async def get_module_version(self) -> FirmwareVersion:
-        """Return the SDK firmware version of the module."""
-        payload = await self._request(Command.MODULE_VERSION)
+    async def get_hardware_version(self) -> FirmwareVersion:
+        """Return the UHF module hardware version.
+
+        On an Ex10 module this is the version of the Ex10 chip.
+        """
+        payload = await self._request(Command.HARDWARE_VERSION)
         return parse_version(payload)
+
+    async def get_device_id(self) -> bytes:
+        """Return the four-byte module ID."""
+        payload = await self._request(Command.GET_DEVICE_ID)
+        return parse_device_id(payload)
 
     async def get_temperature(self) -> float:
         """Return the reader temperature in degrees C."""
@@ -321,12 +338,13 @@ class ChainwayClient:
         require_status_header(payload, 2, PeripheralSubcommand.IDLE_SLEEP_GET, "idle sleep time")
         return payload[1]
 
-    async def set_rf_power(self, power_dbm: float, *, antenna: int = 1) -> None:
+    async def set_rf_power(self, power_dbm: float, *, antenna: int = 1, save: bool = True) -> None:
         """Set the transmit and receive power of one antenna.
 
         Args:
             power_dbm: Power in dBm applied to both directions.
             antenna: One-based antenna number.
+            save: Store the setting across a power cycle.
 
         Raises:
             ValueError: The antenna number or the power value is out
@@ -335,12 +353,17 @@ class ChainwayClient:
         if not MIN_POWER_DBM <= power_dbm <= MAX_POWER_DBM:
             msg = f"power must be between {MIN_POWER_DBM} and {MAX_POWER_DBM} dBm, got {power_dbm}"
             raise ValueError(msg)
-        payload = build_power_payload(antenna, power_dbm, power_dbm)
+        payload = build_power_payload(antenna, power_dbm, power_dbm, save=save)
         response = await self._request(Command.SET_POWER, payload)
         _require_ack(response, Command.SET_POWER)
 
     async def set_antenna_power(
-        self, antenna: int, read_power_dbm: float, write_power_dbm: float
+        self,
+        antenna: int,
+        read_power_dbm: float,
+        write_power_dbm: float,
+        *,
+        save: bool = True,
     ) -> None:
         """Set separate receive and transmit power for one antenna.
 
@@ -352,7 +375,7 @@ class ChainwayClient:
             if not MIN_POWER_DBM <= power <= MAX_POWER_DBM:
                 msg = f"power must be between {MIN_POWER_DBM} and {MAX_POWER_DBM} dBm, got {power}"
                 raise ValueError(msg)
-        payload = build_power_payload(antenna, read_power_dbm, write_power_dbm)
+        payload = build_power_payload(antenna, read_power_dbm, write_power_dbm, save=save)
         response = await self._request(Command.SET_POWER, payload)
         _require_ack(response, Command.SET_POWER)
 
@@ -370,9 +393,18 @@ class ChainwayClient:
         if not 1 <= frequency_khz <= MAX_FIXED_FREQUENCY_KHZ:
             msg = f"frequency must be at most {MAX_FIXED_FREQUENCY_KHZ} kHz, got {frequency_khz}"
             raise ValueError(msg)
-        payload = b"\x01" + frequency_khz.to_bytes(3)
+        payload = b"\x01" + frequency_khz.to_bytes(FREQUENCY_BYTES)
         response = await self._request(Command.SET_FIXED_FREQUENCY, payload)
         _require_ack(response, Command.SET_FIXED_FREQUENCY)
+
+    async def get_fixed_frequency(self) -> tuple[int, ...]:
+        """Return the fixed frequency table in kHz.
+
+        The module currently supports one frequency, the table
+        shape allows more.
+        """
+        payload = await self._request(Command.GET_FIXED_FREQUENCY)
+        return parse_fixed_frequency(payload)
 
     async def set_region(self, region: Region, *, save: bool = True) -> None:
         """Set the regulatory frequency region."""
@@ -391,15 +423,18 @@ class ChainwayClient:
         response = await self._request(Command.SET_CARRIER_WAVE, bytes((int(enabled),)))
         _require_ack(response, Command.SET_CARRIER_WAVE)
 
-    async def get_carrier_wave(self) -> bool:
-        """Return whether the continuous carrier wave is on.
+    async def get_return_loss(self) -> tuple[ReturnLoss, ...]:
+        """Return the return loss of every antenna port in dB.
 
-        Both SDKs read the first payload byte as the state and do not
-        check the response length, so any length is accepted.
+        A port reported as 0 is not enabled, or has no antenna
+        connected on a single-port module. Both Java SDKs read the
+        first payload byte of this response as a carrier wave
+        on/off state, which is the port-1 number of the return
+        loss layout, so this method follows the official protocol
+        document instead.
         """
-        payload = await self._request(Command.GET_CARRIER_WAVE)
-        require_minimum_length(payload, 1, "carrier wave")
-        return payload[0] == 0x01
+        payload = await self._request(Command.GET_RETURN_LOSS)
+        return parse_return_loss(payload)
 
     async def set_gen2_parameters(self, parameters: Gen2Parameters) -> None:
         """Set the Gen2 inventory parameters."""
@@ -550,10 +585,10 @@ class ChainwayClient:
         require_status_header(payload, 4, 0x01, "antenna")
         return payload[2] << 8 | payload[3]
 
-    async def set_fast_inventory_mode(self, *, enabled: bool) -> None:
+    async def set_fast_inventory_mode(self, *, enabled: bool, save: bool = True) -> None:
         """Turn the fast inventory mode on or off."""
         response = await self._request(
-            Command.SET_FAST_INVENTORY_MODE, bytes((0x01, int(enabled), 0x00))
+            Command.SET_FAST_INVENTORY_MODE, bytes((int(save), int(enabled), 0x00))
         )
         _require_ack(response, Command.SET_FAST_INVENTORY_MODE)
 
@@ -563,10 +598,20 @@ class ChainwayClient:
         require_status_header(payload, 2, 0x01, "fast inventory mode")
         return payload[1] == 0x01
 
-    async def soft_reset(self) -> None:
-        """Reset the UHF module. The link may drop and reconnect."""
-        response = await self._request(Command.SOFT_RESET)
-        _require_ack(response, Command.SOFT_RESET)
+    async def software_reset(self) -> None:
+        """Reset the UHF module with the module-level software reset."""
+        response = await self._request(Command.SOFTWARE_RESET)
+        _require_ack(response, Command.SOFTWARE_RESET)
+
+    async def restore_factory_settings(self) -> None:
+        """Restore the factory settings of the UHF module.
+
+        The official protocol document defines opcode 0x74 as the
+        factory reset, the SDKs call the same opcode the soft reset.
+        The link may drop and reconnect.
+        """
+        response = await self._request(Command.RESTORE_FACTORY_SETTINGS)
+        _require_ack(response, Command.RESTORE_FACTORY_SETTINGS)
 
     async def single_inventory(self) -> Tag | None:
         """Inventory once and return the tag, or None without a tag."""
@@ -687,13 +732,7 @@ class ChainwayClient:
         payload = build_tag_operation_payload(access_password, tag_filter, tail)
         response = await self._request(Command.READ_TAG, payload)
         _require_tag_success(response, Command.READ_TAG)
-        require_minimum_length(response, 4, "read")
-        words = response[2] << 8 | response[3]
-        data = response[4:]
-        if len(data) < words * 2:
-            msg = f"read response promised {words * 2} data bytes, got {len(data)}"
-            raise ChainwayResponseError(msg)
-        return data[: words * 2]
+        return parse_word_data(response, "read")
 
     async def write_tag(
         self,
@@ -831,6 +870,137 @@ class ChainwayClient:
         payload = build_tag_operation_payload(kill_password, tag_filter, b"")
         response = await self._request(Command.KILL_TAG, payload)
         _require_tag_success(response, Command.KILL_TAG)
+
+    async def authenticate_tag(
+        self,
+        challenge: bytes,
+        *,
+        key_id: int = 0x00,
+        access_password: bytes = b"\x00\x00\x00\x00",
+        tag_filter: TagFilter | None = None,
+    ) -> bytes:
+        """Authenticate one tag with the Gen2 v2.0 Authenticate command.
+
+        Args:
+            challenge: The ten-byte IChallenge_TAM1 data.
+            key_id: The key ID, the default is 0.
+            access_password: Four-byte tag access password.
+            tag_filter: Selection filter, or None to let the reader
+                pick the tag.
+
+        Returns:
+            The returned data, eight words on success.
+
+        Raises:
+            ValueError: The challenge is not ten bytes or the key
+                ID does not fit one byte.
+            ChainwayResponseError: The reader reported a failure.
+        """
+        if len(challenge) != AUTH_CHALLENGE_SIZE:
+            msg = f"challenge must be {AUTH_CHALLENGE_SIZE} bytes, got {len(challenge)}"
+            raise ValueError(msg)
+        if not 0 <= key_id <= BYTE_MAX:
+            msg = f"key ID must be between 0 and 255, got {key_id}"
+            raise ValueError(msg)
+        tail = bytes((AUTH_KEY_AND_DATA_SIZE, key_id)) + challenge
+        payload = build_tag_operation_payload(access_password, tag_filter, tail)
+        response = await self._request(Command.AUTHENTICATE_TAG, payload)
+        _require_tag_success(response, Command.AUTHENTICATE_TAG)
+        return parse_word_data(response, "authenticate")
+
+    async def read_block_permalock(
+        self,
+        bank: MemoryBank,
+        block_ptr: int,
+        block_range: int,
+        *,
+        access_password: bytes = b"\x00\x00\x00\x00",
+        tag_filter: TagFilter | None = None,
+    ) -> bytes:
+        """Read the permalock status of one tag memory bank.
+
+        Args:
+            bank: The bank to read the permalock status from.
+            block_ptr: Block start address, in windows of 16
+                blocks of 8 bytes.
+            block_range: Number of 16-block windows to read.
+            access_password: Four-byte tag access password.
+            tag_filter: Selection filter, or None to let the reader
+                pick the tag.
+
+        Returns:
+            The per-block permalock bits, ``block_range`` words.
+
+        Raises:
+            ValueError: The window is invalid.
+            ChainwayResponseError: The reader reported a failure.
+        """
+        validate_block_window(block_ptr, block_range)
+        tail = bytes(
+            (
+                0x00,
+                bank,
+                block_ptr >> 8 & 0xFF,
+                block_ptr & 0xFF,
+                block_range >> 8 & 0xFF,
+                block_range & 0xFF,
+            )
+        )
+        payload = build_tag_operation_payload(access_password, tag_filter, tail)
+        response = await self._request(Command.BLOCK_PERMALOCK_TAG, payload)
+        _require_tag_success(response, Command.BLOCK_PERMALOCK_TAG)
+        data = response[2:]
+        if len(data) < block_range * 2:
+            msg = f"block permalock response promised {block_range * 2} data bytes, got {len(data)}"
+            raise ChainwayResponseError(msg)
+        return data[: block_range * 2]
+
+    async def set_block_permalock(
+        self,
+        bank: MemoryBank,
+        block_ptr: int,
+        block_range: int,
+        mask: int,
+        *,
+        access_password: bytes = b"\x00\x00\x00\x00",
+        tag_filter: TagFilter | None = None,
+    ) -> None:
+        """Permalock blocks of one tag memory bank.
+
+        Args:
+            bank: The bank to permalock blocks of.
+            block_ptr: Block start address, in windows of 16
+                blocks of 8 bytes.
+            block_range: Number of 16-block windows to permalock.
+            mask: The 16-bit block mask, the high bit selects the
+                first block of the window.
+            access_password: Four-byte tag access password.
+            tag_filter: Selection filter, or None to let the reader
+                pick the tag.
+
+        Raises:
+            ValueError: The window or the mask is invalid.
+            ChainwayResponseError: The reader reported a failure.
+        """
+        validate_block_window(block_ptr, block_range)
+        if not 0 <= mask <= WORD_MAX:
+            msg = f"mask must be between 0 and 65535, got {mask}"
+            raise ValueError(msg)
+        tail = bytes(
+            (
+                0x01,
+                bank,
+                block_ptr >> 8 & 0xFF,
+                block_ptr & 0xFF,
+                block_range >> 8 & 0xFF,
+                block_range & 0xFF,
+                mask >> 8 & 0xFF,
+                mask & 0xFF,
+            )
+        )
+        payload = build_tag_operation_payload(access_password, tag_filter, tail)
+        response = await self._request(Command.BLOCK_PERMALOCK_TAG, payload)
+        _require_tag_success(response, Command.BLOCK_PERMALOCK_TAG)
 
     async def read_collected_tags(self) -> CollectedTags:
         """Pull the tags collected in auto or trigger work mode."""

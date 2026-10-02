@@ -41,7 +41,11 @@ class MemoryBank(IntEnum):
 
 
 class Region(IntEnum):
-    """Regulatory frequency region, set with command 0x2C."""
+    """Regulatory frequency region, set with command 0x2C.
+
+    The values follow the official protocol document, which lists
+    25 regions.
+    """
 
     CHINA_1 = 0x01
     CHINA_2 = 0x02
@@ -49,6 +53,25 @@ class Region(IntEnum):
     USA = 0x08
     KOREA = 0x16
     JAPAN = 0x32
+    SOUTH_AFRICA = 0x33
+    TAIWAN = 0x34
+    VIETNAM = 0x35
+    PERU = 0x36
+    RUSSIA = 0x37
+    SRI_LANKA = 0x38
+    AZERBAIJAN = 0x39
+    IRAN = 0x3A
+    MALAYSIA = 0x3B
+    BRAZIL = 0x3C
+    ETSI_UPPER = 0x3D
+    AUSTRALIA = 0x3E
+    INDONESIA = 0x3F
+    ISRAEL = 0x40
+    HONG_KONG = 0x41
+    NEW_ZEALAND = 0x42
+    BAND_880_930 = 0x43
+    SINGAPORE = 0x44
+    THAILAND = 0x45
 
 
 class ProtocolType(IntEnum):
@@ -60,12 +83,26 @@ class ProtocolType(IntEnum):
 
 
 class RfLink(IntEnum):
-    """Recommended RF link combination, set with command 0x52."""
+    """Recommended RF link combination, set with command 0x52.
 
-    DSB_ASK_FM0_40_KHZ = 0x00
+    The values follow the official protocol document. The Windows
+    DLL document names 0x00 to 0x03 differently, the values match.
+    The Gen2X combinations only support the latest Impinj tags
+    such as M830 and M850.
+    """
+
+    PR_ASK_MILLER_8_160_KHZ = 0x00
     PR_ASK_MILLER_4_250_KHZ = 0x01
-    PR_ASK_MILLER_4_300_KHZ = 0x02
-    DSB_ASK_FM0_400_KHZ = 0x03
+    PR_ASK_MILLER_4_320_KHZ = 0x02
+    PR_ASK_MILLER_4_640_KHZ = 0x03
+    PR_ASK_MILLER_2_320_KHZ = 0x04
+    PR_ASK_MILLER_2_640_KHZ = 0x05
+    GEN2X_MILLER_8_160_KHZ = 0x0A
+    GEN2X_MILLER_4_250_KHZ = 0x0B
+    GEN2X_MILLER_4_320_KHZ = 0x0C
+    GEN2X_MILLER_4_640_KHZ = 0x0D
+    GEN2X_MILLER_2_320_KHZ = 0x0E
+    GEN2X_MILLER_2_640_KHZ = 0x0F
 
 
 class LinkFrequency(IntEnum):
@@ -159,6 +196,18 @@ class AntennaPower:
     antenna: int
     read_power_dbm: float
     write_power_dbm: float
+
+
+@dataclass(frozen=True, slots=True)
+class ReturnLoss:
+    """Return loss of one antenna port, read with command 0x26.
+
+    A loss of 0 means the port is not enabled, or has no antenna
+    connected on a single-port module.
+    """
+
+    port: int
+    loss_db: int
 
 
 @dataclass(frozen=True, slots=True)

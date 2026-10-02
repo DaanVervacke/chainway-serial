@@ -68,6 +68,40 @@ def test_collected_tags_frame_matches_the_protocol_reference() -> None:
     assert build_frame(0xE0) == bytes.fromhex("A55A0008E0E80D0A")
 
 
+def test_get_device_id_frame_matches_the_protocol_reference() -> None:
+    assert build_frame(0x04) == bytes.fromhex("A55A0008040C0D0A")
+
+
+def test_get_fixed_frequency_frame_matches_the_protocol_reference() -> None:
+    assert build_frame(0x16) == bytes.fromhex("A55A0008161E0D0A")
+
+
+def test_get_return_loss_frame_matches_the_protocol_reference() -> None:
+    assert build_frame(0x26) == bytes.fromhex("A55A0008262E0D0A")
+
+
+def test_software_reset_frame_matches_the_protocol_reference() -> None:
+    assert build_frame(0x68) == bytes.fromhex("A55A000868600D0A")
+
+
+def test_restore_factory_settings_frame_matches_the_protocol_reference() -> None:
+    assert build_frame(0x74) == bytes.fromhex("A55A0008747C0D0A")
+
+
+def test_authenticate_tag_frame_matches_the_protocol_reference() -> None:
+    payload = bytes.fromhex("0000000001000000000B0000010203040506070809")
+    assert build_frame(0x8E, payload) == bytes.fromhex(
+        "A55A001D8E0000000001000000000B0000010203040506070809980D0A"
+    )
+
+
+def test_block_permalock_frame_matches_the_protocol_reference() -> None:
+    payload = bytes.fromhex("000000000200000060E2003414013301001038D2B5000300000001")
+    assert build_frame(0x9F, payload) == bytes.fromhex(
+        "A55A00239F000000000200000060E2003414013301001038D2B5000300000001620D0A"
+    )
+
+
 def test_roundtrip() -> None:
     frame = build_frame(0x70, b"\x00\x02\x00\x04")
     assert parse_frame(frame) == (0x70, b"\x00\x02\x00\x04")

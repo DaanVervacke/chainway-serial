@@ -30,6 +30,8 @@ Models
    :members:
 .. autoclass:: chainway_serial.AntennaPower
    :members:
+.. autoclass:: chainway_serial.ReturnLoss
+   :members:
 .. autoclass:: chainway_serial.CollectedTags
    :members:
 .. autoclass:: chainway_serial.GpoState

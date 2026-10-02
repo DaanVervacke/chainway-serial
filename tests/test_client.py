@@ -20,6 +20,7 @@ from chainway_serial import (
     OutputRoute,
     ProtocolType,
     Region,
+    ReturnLoss,
     RfLink,
     TagFilter,
     TriggerConfig,
@@ -62,8 +63,12 @@ async def test_get_stm32_version(client: ChainwayClient) -> None:
     assert await client.get_stm32_version() == FirmwareVersion(1, 0, 1)
 
 
-async def test_get_module_version(client: ChainwayClient) -> None:
-    assert await client.get_module_version() == FirmwareVersion(0, 1, 2)
+async def test_get_hardware_version(client: ChainwayClient) -> None:
+    assert await client.get_hardware_version() == FirmwareVersion(0, 1, 2)
+
+
+async def test_get_device_id(client: ChainwayClient) -> None:
+    assert await client.get_device_id() == b"\xf1\xf2\xf3\xf4"
 
 
 async def test_get_temperature(client: ChainwayClient) -> None:
@@ -72,7 +77,7 @@ async def test_get_temperature(client: ChainwayClient) -> None:
 
 async def test_get_antenna_connection_state(client: ChainwayClient) -> None:
     state = await client.get_antenna_connection_state()
-    assert state.connected == (True, True, False, False, False, False, False, False)
+    assert state.connected == (True, True, False, False, False, False, False, False) + (False,) * 8
     assert state.raw == b"\x00\x03"
 
 
@@ -86,6 +91,8 @@ async def test_set_rf_power_sends_the_documented_payload(
     logic, _ = reader_server
     await client.set_rf_power(30.0, antenna=1)
     assert received(logic, Command.SET_POWER) == b"\x02\x01\x0b\xb8\x0b\xb8"
+    await client.set_rf_power(30.0, antenna=1, save=False)
+    assert received(logic, Command.SET_POWER) == b"\x00\x01\x0b\xb8\x0b\xb8"
 
 
 async def test_set_rf_power_rejects_a_bad_value(client: ChainwayClient) -> None:
@@ -109,14 +116,24 @@ async def test_fixed_frequency_sends_the_documented_payload(
     assert received(logic, Command.SET_FIXED_FREQUENCY) == b"\x01\x0e\x0a\x3d"
 
 
+async def test_get_fixed_frequency(client: ChainwayClient) -> None:
+    assert await client.get_fixed_frequency() == (920125,)
+
+
 async def test_region(client: ChainwayClient) -> None:
     await client.set_region(Region.USA, save=False)
     assert await client.get_region() is Region.USA
 
 
-async def test_carrier_wave(client: ChainwayClient) -> None:
+async def test_carrier_wave_and_return_loss(client: ChainwayClient) -> None:
     await client.set_carrier_wave(enabled=True)
-    assert await client.get_carrier_wave() is True
+    losses = await client.get_return_loss()
+    assert losses == (
+        ReturnLoss(port=1, loss_db=18),
+        ReturnLoss(port=2, loss_db=1),
+        ReturnLoss(port=3, loss_db=0),
+        ReturnLoss(port=4, loss_db=0),
+    )
 
 
 async def test_gen2_roundtrip(client: ChainwayClient) -> None:
@@ -125,8 +142,8 @@ async def test_gen2_roundtrip(client: ChainwayClient) -> None:
 
 
 async def test_rf_link(client: ChainwayClient) -> None:
-    await client.set_rf_link(RfLink.DSB_ASK_FM0_400_KHZ, save=True)
-    assert await client.get_rf_link() is RfLink.PR_ASK_MILLER_4_300_KHZ
+    await client.set_rf_link(RfLink.PR_ASK_MILLER_4_640_KHZ, save=True)
+    assert await client.get_rf_link() is RfLink.PR_ASK_MILLER_4_320_KHZ
 
 
 async def test_fast_id(client: ChainwayClient) -> None:
@@ -183,20 +200,27 @@ async def test_antenna_work_time_roundtrip(client: ChainwayClient) -> None:
     assert await client.get_antenna_work_time(1) == 200
 
 
-async def test_fast_inventory_mode(client: ChainwayClient) -> None:
+async def test_fast_inventory_mode_sends_the_documented_payload(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
     await client.set_fast_inventory_mode(enabled=False)
+    assert received(logic, Command.SET_FAST_INVENTORY_MODE) == b"\x01\x00\x00"
+    await client.set_fast_inventory_mode(enabled=False, save=False)
+    assert received(logic, Command.SET_FAST_INVENTORY_MODE) == b"\x00\x00\x00"
     assert await client.get_fast_inventory_mode() is True
 
 
-async def test_soft_reset(client: ChainwayClient) -> None:
-    await client.soft_reset()
+async def test_reset_commands(client: ChainwayClient) -> None:
+    await client.software_reset()
+    await client.restore_factory_settings()
 
 
 async def test_single_inventory(client: ChainwayClient) -> None:
     tag = await client.single_inventory()
     assert tag is not None
     assert tag.epc == bytes(range(1, 13))
-    assert tag.rssi == -29.7
+    assert tag.rssi == -29.8
     assert tag.antenna == 0
 
 
@@ -251,6 +275,92 @@ async def test_kill_tag(client: ChainwayClient, reader_server: tuple[FakeReaderL
     logic, _ = reader_server
     await client.kill_tag(b"\x12\x34\x56\x78")
     assert received(logic, Command.KILL_TAG) == b"\x12\x34\x56\x78\x01\x00\x00\x00\x00"
+
+
+async def test_authenticate_tag_sends_the_documented_payload(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    challenge = bytes(range(10))
+    data = await client.authenticate_tag(challenge)
+    assert data == bytes(range(16))
+    assert received(logic, Command.AUTHENTICATE_TAG) == (
+        b"\x00\x00\x00\x00\x01\x00\x00\x00\x00\x0b\x00" + challenge
+    )
+
+
+async def test_authenticate_tag_with_a_filter(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    tag_filter = TagFilter(bank=MemoryBank.TID, bit_address=0, bit_length=96, data=bytes(12))
+    await client.authenticate_tag(bytes(10), key_id=2, tag_filter=tag_filter)
+    assert received(logic, Command.AUTHENTICATE_TAG).startswith(
+        b"\x00\x00\x00\x00\x02\x00\x00\x00\x60" + bytes(12) + b"\x0b\x02"
+    )
+
+
+async def test_authenticate_tag_rejects_a_bad_challenge(client: ChainwayClient) -> None:
+    with pytest.raises(ValueError, match="challenge"):
+        await client.authenticate_tag(bytes(9))
+
+
+async def test_authenticate_tag_rejects_a_bad_key_id(client: ChainwayClient) -> None:
+    with pytest.raises(ValueError, match="key ID"):
+        await client.authenticate_tag(bytes(10), key_id=256)
+
+
+async def test_read_block_permalock_sends_the_documented_payload(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    data = await client.read_block_permalock(MemoryBank.USER, 0, 1)
+    assert data == b"\xf0\x00"
+    assert received(logic, Command.BLOCK_PERMALOCK_TAG) == (
+        b"\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x03\x00\x00\x00\x01"
+    )
+
+
+async def test_read_block_permalock_with_a_filter(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    tag_filter = TagFilter(bank=MemoryBank.TID, bit_address=0, bit_length=96, data=bytes(12))
+    await client.read_block_permalock(MemoryBank.USER, 0, 1, tag_filter=tag_filter)
+    assert received(logic, Command.BLOCK_PERMALOCK_TAG) == (
+        b"\x00\x00\x00\x00\x02\x00\x00\x00\x60" + bytes(12) + b"\x00\x03\x00\x00\x00\x01"
+    )
+
+
+async def test_read_block_permalock_rejects_a_short_data_response(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    logic._responders[Command.BLOCK_PERMALOCK_TAG] = lambda _payload: b"\x01\x00"
+    with pytest.raises(ChainwayResponseError, match="promised"):
+        await client.read_block_permalock(MemoryBank.USER, 0, 1)
+
+
+async def test_set_block_permalock_sends_the_documented_payload(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    await client.set_block_permalock(MemoryBank.USER, 0, 1, 0xF000)
+    assert received(logic, Command.BLOCK_PERMALOCK_TAG) == (
+        b"\x00\x00\x00\x00\x01\x00\x00\x00\x00\x01\x03\x00\x00\x00\x01\xf0\x00"
+    )
+
+
+async def test_block_permalock_rejects_a_bad_window(client: ChainwayClient) -> None:
+    with pytest.raises(ValueError, match="block pointer"):
+        await client.read_block_permalock(MemoryBank.USER, -1, 1)
+    with pytest.raises(ValueError, match="block range"):
+        await client.read_block_permalock(MemoryBank.USER, 0, 0)
+
+
+async def test_block_permalock_rejects_a_bad_mask(client: ChainwayClient) -> None:
+    with pytest.raises(ValueError, match="mask"):
+        await client.set_block_permalock(MemoryBank.USER, 0, 1, 0x10000)
 
 
 async def test_failing_tag_operation_raises(

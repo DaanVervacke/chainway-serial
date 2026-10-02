@@ -1,9 +1,10 @@
 Tag operations
 ==============
 
-Read, write, block write, block erase, lock and kill share one request
-layout: a four-byte password, an optional filter that selects one tag,
-and the operation tail. Addresses and lengths are in 16-bit words.
+Read, write, block write, block erase, lock, kill, authenticate and
+block permalock share one request layout: a four-byte password, an
+optional filter that selects one tag, and the operation tail. Addresses
+and lengths are in 16-bit words.
 
 .. code-block:: python
 
@@ -54,6 +55,28 @@ Kill needs the kill password, not the access password:
 .. code-block:: python
 
    await client.kill_tag(b"\x12\x34\x56\x78")
+
+Authenticate
+------------
+
+The Gen2 v2.0 Authenticate command needs the ten-byte IChallenge_TAM1
+data and returns sixteen bytes on success:
+
+.. code-block:: python
+
+   data = await client.authenticate_tag(challenge, key_id=0)
+   print(data.hex())
+
+Block permalock
+---------------
+
+Blocks are windows of 16 blocks of 8 bytes. Read the per-block
+permalock status, or permalock blocks with a 16-bit mask:
+
+.. code-block:: python
+
+   status = await client.read_block_permalock(MemoryBank.USER, 0, 1)
+   await client.set_block_permalock(MemoryBank.USER, 0, 1, mask=0xF000)
 
 Collected tags
 --------------
