@@ -8,8 +8,6 @@ Sources:
 - Java `ReaderAPI20240822.jar`, decompiled with jadx. Frame builder: `com/rscja/deviceapi/i.java`, UR4 overrides in `j.java`. Tag record parser and batch format: `com/rscja/deviceapi/b.java`. Hardcoded ready-made frames: `com/rscja/deviceapi/d.java`.
 - Windows `UHFAPI.dll` interface document `RFID_API_DLL_V1.0.1.doc`, converted to text. Command semantics, parameter units and value ranges. The C header `UHFAPI.h` and import library ship in the same archive.
 - `libTagReader.so`, the Linux native counterpart of the DLL, extracted from the Java archive with debug symbols intact. Its frame builder and receiver independently confirm the wire format, and the receiver also accepts the `C8 8C` header and a 4096 byte length window.
-- `UHF_Application_Protocol_V2.1.2.pdf`, the vendor's official wire protocol document for the UHF module, tracked at the repository root. It confirms the frame format, documents the phase reporting inventory mode, the region and RF link tables, and is the only source for the module-level commands 0x04, 0x16, 0x26, 0x68, 0x8E and 0x9F.
-- Java and C# demo applications shipped in the three RAR archives at the repository root.
 
 Where the Android AAR and the Java jar disagree on a payload byte, the Windows DLL document usually explains it: the byte is a save flag, 0 for settings that survive until power off and 1 for settings stored persistently. The AAR tends to send 0, the jar tends to send 1. Both are valid wire encodings.
 
@@ -418,17 +416,16 @@ Set with 0xA1 sub 05.
 - The 4096 versus 2048 length window: the Java SDKs cap at 2048, the native library at 4096
 - The phase reporting record layout with TID or USER blocks present, inferred from the documented EPC-only shape
 - The `27 10` start inventory payload seen in a third-party client
-- Whether the UR4 reader firmware forwards the module-level commands 0x04, 0x16, 0x26, 0x68, 0x8E and 0x9F, which appear in the official protocol document but in no Java SDK
-- Whether 0x74 factory-resets or soft-resets the UR4, the document and the SDKs name the same opcode differently
-- The block permalock mask bytes on the permalock form, inferred from the document's read-only worked example
+- Whether the UR4 reader firmware forwards the module-level commands 0x04, 0x16, 0x26, 0x68, 0x8E and 0x9F, which appear in no Java SDK
+- Whether 0x74 factory-resets or soft-resets the UR4
+- The block permalock mask bytes on the permalock form
 - RS-485 variants, if the specific unit has one: half-duplex direction control is outside the protocol
 
 ## Decompiled source locations
 
-The extracted archives and decompiled trees live in a temporary workspace. Re-extract from the three RAR files at the repository root when needed:
+The decompiled trees live in a temporary workspace:
 
 - Android AAR: obfuscated class names, `Q.java` and `T.java` hold the command builders, `com/rscja/deviceapi/b.java` the tag record, batch and lock code logic
-- Java jar: readable names, `i.java` and `j.java` hold the frame and command logic, `h.java` and `d.java` the record and hardcoded frames. The nested `app/v1.1_20240823.rar` inside `Demo_Java_UR4_UR1A.rar` holds `libTagReader.so`, the native Linux library with debug symbols
+- Java jar: readable names, `i.java` and `j.java` hold the frame and command logic, `h.java` and `d.java` the record and hardcoded frames
 - `api_doc.txt` inside the Windows demo: converted DLL reference with command semantics and units, `UHFAPI.h` in the same archive holds the C signatures
-- `UHF_Application_Protocol_V2.1.2.pdf` at the repository root: the vendor's official module protocol document
 - C# demo with the full P/Invoke surface in `UHFAPI.cs`

@@ -17,3 +17,5 @@ docs/_build/
 .DS_Store
 captures/
 .env
+*.rar
+*.pdf
