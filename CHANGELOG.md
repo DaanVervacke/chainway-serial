@@ -15,9 +15,11 @@ Before 1.0, breaking changes ship as minor bumps.
 
 - Add the decoded Chainway UR4 wire protocol reference
 - Correct the protocol reference from the SDK verification
+- Add the official protocol document and the research findings
 ### Features
 
 - Implement the frame codec, protocol, typed client and UDP discovery
+- Accept both frame headers and add phase reporting inventory
 ### Maintenance
 
 - Scaffold the repository with tooling, workflows and vendor archives
