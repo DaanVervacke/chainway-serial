@@ -35,6 +35,8 @@ from .const import (
     SINGLE_INVENTORY_PAYLOAD,
     START_INVENTORY_PAYLOAD,
     START_INVENTORY_PHASE_PAYLOAD,
+    STATUS_OK,
+    TAG_SUCCESS,
     UPDATE_BLOCK_SIZE,
     WORD_MAX,
     Command,
@@ -126,12 +128,9 @@ def _consume_task_exception(task: asyncio.Task[None]) -> None:
 
 
 def _require_ack(payload: bytes, command: Command) -> None:
-    if not payload or payload[0] != 0x01:
+    if not payload or payload[0] != STATUS_OK:
         msg = f"command {command:#04x} was not acknowledged, got payload {payload!r}"
         raise ChainwayResponseError(msg)
-
-
-TAG_SUCCESS = b"\x01\x00"
 
 
 def _require_tag_success(payload: bytes, command: Command) -> None:
@@ -415,7 +414,7 @@ class ChainwayClient:
     async def get_region(self) -> Region:
         """Return the regulatory frequency region."""
         payload = await self._request(Command.GET_REGION)
-        require_status_header(payload, 2, 0x01, "region")
+        require_status_header(payload, 2, STATUS_OK, "region")
         return Region(payload[1])
 
     async def set_carrier_wave(self, *, enabled: bool) -> None:
@@ -457,7 +456,7 @@ class ChainwayClient:
     async def get_rf_link(self) -> RfLink:
         """Return the recommended RF link combination."""
         payload = await self._request(Command.GET_RF_LINK, b"\x00\x00")
-        require_status_header(payload, 3, 0x01, "RF")
+        require_status_header(payload, 3, STATUS_OK, "RF")
         return RfLink(payload[2])
 
     async def set_fast_id(self, *, enabled: bool) -> None:
@@ -468,7 +467,7 @@ class ChainwayClient:
     async def get_fast_id(self) -> bool:
         """Return whether FastID is on."""
         payload = await self._request(Command.GET_FAST_ID, b"\x00\x00")
-        require_status_header(payload, 2, 0x01, "FastID")
+        require_status_header(payload, 2, STATUS_OK, "FastID")
         return payload[1] == 0x01
 
     async def set_tag_focus(self, *, enabled: bool) -> None:
@@ -521,7 +520,7 @@ class ChainwayClient:
     async def get_inventory_mode(self) -> InventoryModeConfig:
         """Return the inventory mode and the USER read window."""
         payload = await self._request(Command.GET_INVENTORY_MODE, b"\x00\x00")
-        require_status_header(payload, 4, 0x01, "inventory")
+        require_status_header(payload, 4, STATUS_OK, "inventory")
         return InventoryModeConfig(
             mode=InventoryMode(payload[1]),
             user_address=payload[2],
@@ -582,7 +581,7 @@ class ChainwayClient:
             msg = f"antenna must be between {MIN_ANTENNA} and {MAX_ANTENNA}, got {antenna}"
             raise ValueError(msg)
         payload = await self._request(Command.GET_ANTENNA_WORK_TIME, bytes((antenna, 0x00)))
-        require_status_header(payload, 4, 0x01, "antenna")
+        require_status_header(payload, 4, STATUS_OK, "antenna")
         return payload[2] << 8 | payload[3]
 
     async def set_fast_inventory_mode(self, *, enabled: bool, save: bool = True) -> None:
@@ -595,7 +594,7 @@ class ChainwayClient:
     async def get_fast_inventory_mode(self) -> bool:
         """Return whether the fast inventory mode is on."""
         payload = await self._request(Command.GET_FAST_INVENTORY_MODE, b"\x00\x00")
-        require_status_header(payload, 2, 0x01, "fast inventory mode")
+        require_status_header(payload, 2, STATUS_OK, "fast inventory mode")
         return payload[1] == 0x01
 
     async def software_reset(self) -> None:

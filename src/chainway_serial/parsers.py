@@ -24,6 +24,7 @@ from .const import (
     READER_ADDRESS_LONG_SIZE,
     READER_ADDRESS_SIZE,
     RETURN_LOSS_RECORD_SIZE,
+    STATUS_OK,
     TID_SIZE,
     USER_BLOCK_MARGIN,
     WORD_MODULUS,
@@ -118,7 +119,7 @@ def parse_temperature(payload: bytes) -> float:
         ChainwayResponseError: The payload does not start with the
             status byte.
     """
-    require_status_header(payload, 3, 0x01, "temperature")
+    require_status_header(payload, 3, STATUS_OK, "temperature")
     raw = payload[1] << 8 | payload[2]
     if raw >= WORD_SIGN_BIT:
         return (raw - WORD_MODULUS) / 100
