@@ -20,6 +20,7 @@ Before 1.0, breaking changes ship as minor bumps.
 
 - Implement the frame codec, protocol, typed client and UDP discovery
 - Accept both frame headers and add phase reporting inventory
+- Implement every command of the official protocol document
 ### Maintenance
 
 - Scaffold the repository with tooling, workflows and vendor archives
