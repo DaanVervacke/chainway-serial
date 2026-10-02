@@ -474,18 +474,13 @@ def unpack_gen2_parameters(payload: bytes) -> Gen2Parameters:
 def parse_reader_address(payload: bytes, subcommand: int) -> ReaderAddress:
     """Parse the address payload of a 0xA2 response."""
     require_status_header(payload, READER_ADDRESS_SIZE, subcommand, "address")
-    address = ReaderAddress(
+    long_form = len(payload) >= READER_ADDRESS_LONG_SIZE
+    return ReaderAddress(
         ip=".".join(str(byte) for byte in payload[1:5]),
         port=payload[5] << 8 | payload[6],
+        subnet_mask=".".join(str(byte) for byte in payload[7:11]) if long_form else None,
+        gateway=".".join(str(byte) for byte in payload[11:15]) if long_form else None,
     )
-    if len(payload) >= READER_ADDRESS_LONG_SIZE:
-        return ReaderAddress(
-            ip=address.ip,
-            port=address.port,
-            subnet_mask=".".join(str(byte) for byte in payload[7:11]),
-            gateway=".".join(str(byte) for byte in payload[11:15]),
-        )
-    return address
 
 
 def build_reader_address_payload(subcommand: int, address: ReaderAddress) -> bytes:
