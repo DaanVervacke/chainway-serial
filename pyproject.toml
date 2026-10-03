@@ -72,7 +72,6 @@ docstring-code-format = true
 [tool.ruff.lint]
 select = ["ALL"]
 ignore = [
-    "D",
     "COM812",
     "ISC001",
     "ANN401",
@@ -82,12 +81,15 @@ ignore = [
     "TC002",
     "TC003",
     "CPY001",
+    "D203",
+    "D213",
+    "D413",
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"scripts/check.py" = ["T201", "S603"]
-"scripts/probe_chainway.py" = ["T201", "S105", "PLR2004"]
-"docs/conf.py" = ["INP001"]
+"scripts/check.py" = ["T201", "S603", "D"]
+"scripts/probe_chainway.py" = ["T201", "S105", "PLR2004", "D"]
+"docs/conf.py" = ["INP001", "D"]
 "tests/**" = [
     "S101",
     "S105",
@@ -96,6 +98,7 @@ ignore = [
     "PLR2004",
     "RUF059",
     "FBT003",
+    "D",
 ]
 
 [tool.pytest.ini_options]

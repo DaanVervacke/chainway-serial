@@ -286,7 +286,6 @@ def parse_tag_record(
     document defines it, and values outside the SDK validity window
     of 20 dBm span parse as None.
 
-
     Args:
         record: The raw record bytes: PC, then EPC, then the optional
             TID and USER blocks, then the optional phase, the RSSI

@@ -160,6 +160,7 @@ class FirmwareVersion:
     patch: int
 
     def __str__(self) -> str:
+        """Return the version as a V-prefixed triple."""
         return f"V{self.major}.{self.minor}.{self.patch}"
 
 
@@ -172,6 +173,7 @@ class InventoryModeConfig:
     user_length: int = 0
 
     def __post_init__(self) -> None:
+        """Require the USER window values to fit one byte each."""
         _require_range("user_address", self.user_address, 0, BYTE_MAX)
         _require_range("user_length", self.user_length, 0, BYTE_MAX)
 
@@ -184,6 +186,7 @@ class AntennaState:
     raw: bytes
 
     def __post_init__(self) -> None:
+        """Require at least one antenna flag."""
         if not self.connected:
             msg = "connected must list at least one antenna"
             raise ValueError(msg)
@@ -234,6 +237,7 @@ class TagFilter:
     data: bytes
 
     def __post_init__(self) -> None:
+        """Validate the bit window and the data length."""
         _require_range("bit_address", self.bit_address, 0, 0xFFFF)
         _require_range("bit_length", self.bit_length, 0, 0xFFFF)
         needed = math.ceil(self.bit_length / 8)
@@ -252,6 +256,7 @@ class TriggerConfig:
     output: OutputRoute
 
     def __post_init__(self) -> None:
+        """Validate the trigger timing ranges."""
         _require_range("work_time_ms", self.work_time_ms, 0, 655350)
         _require_range("min_interval_ms", self.min_interval_ms, 0, 655350)
 
@@ -274,6 +279,7 @@ class ReaderAddress:
     gateway: str | None = None
 
     def __post_init__(self) -> None:
+        """Validate the IPv4 address and the port."""
         parts = self.ip.split(".")
         if len(parts) != IPV4_OCTETS or any(
             not part.isdigit() or not 0 <= int(part) <= BYTE_MAX for part in parts
@@ -326,6 +332,7 @@ class Gen2Parameters:
     link_frequency: int = 0x02
 
     def __post_init__(self) -> None:
+        """Validate every parameter range."""
         _require_range("target", self.target, 0, 4)
         _require_range("action", self.action, 0, 7)
         _require_range("start_q", self.start_q, 0, 15)
