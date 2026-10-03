@@ -120,13 +120,19 @@ async def test_get_fixed_frequency(client: ChainwayClient) -> None:
     assert await client.get_fixed_frequency() == (920125,)
 
 
-async def test_region(client: ChainwayClient) -> None:
-    await client.set_region(Region.USA, save=False)
-    assert await client.get_region() is Region.USA
+async def test_region(client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]) -> None:
+    logic, _ = reader_server
+    await client.set_region(Region.JAPAN, save=False)
+    assert received(logic, Command.SET_REGION) == b"\x00\x32"
+    assert await client.get_region() is Region.JAPAN
 
 
-async def test_carrier_wave_and_return_loss(client: ChainwayClient) -> None:
+async def test_carrier_wave_and_return_loss(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
     await client.set_carrier_wave(enabled=True)
+    assert received(logic, Command.SET_CARRIER_WAVE) == b"\x01"
     losses = await client.get_return_loss()
     assert losses == (
         ReturnLoss(port=1, loss_db=18),
@@ -136,23 +142,36 @@ async def test_carrier_wave_and_return_loss(client: ChainwayClient) -> None:
     )
 
 
-async def test_gen2_roundtrip(client: ChainwayClient) -> None:
-    await client.set_gen2_parameters(Gen2Parameters(target=3, session=2))
-    assert (await client.get_gen2_parameters()).target == 4
+async def test_gen2_roundtrip(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    parameters = Gen2Parameters(target=3, session=2)
+    await client.set_gen2_parameters(parameters)
+    assert received(logic, Command.SET_GEN2_PARAMETERS) == b"\x61\x40\xfb\x22"
+    assert await client.get_gen2_parameters() == parameters
 
 
-async def test_rf_link(client: ChainwayClient) -> None:
+async def test_rf_link(client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]) -> None:
+    logic, _ = reader_server
     await client.set_rf_link(RfLink.PR_ASK_MILLER_4_640_KHZ, save=True)
-    assert await client.get_rf_link() is RfLink.PR_ASK_MILLER_4_320_KHZ
+    assert received(logic, Command.SET_RF_LINK) == b"\x00\x01\x03"
+    assert await client.get_rf_link() is RfLink.PR_ASK_MILLER_4_640_KHZ
 
 
-async def test_fast_id(client: ChainwayClient) -> None:
+async def test_fast_id(client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]) -> None:
+    logic, _ = reader_server
     await client.set_fast_id(enabled=False)
-    assert await client.get_fast_id() is True
+    assert received(logic, Command.SET_FAST_ID) == b"\x00\x00"
+    assert await client.get_fast_id() is False
 
 
-async def test_tag_focus(client: ChainwayClient) -> None:
+async def test_tag_focus(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
     await client.set_tag_focus(enabled=True)
+    assert received(logic, Command.SET_TAG_FOCUS) == b"\x01\x00"
     assert await client.get_tag_focus() is True
 
 
@@ -165,10 +184,14 @@ async def test_protocol_type_roundtrip(
     assert await client.get_protocol_type() is ProtocolType.GB_T_29768
 
 
-async def test_inventory_mode_roundtrip(client: ChainwayClient) -> None:
+async def test_inventory_mode_roundtrip(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
     await client.set_inventory_mode(
         InventoryMode.EPC_TID_USER, user_address=2, user_length=4, save=False
     )
+    assert received(logic, Command.SET_INVENTORY_MODE) == b"\x00\x02\x02\x04"
     config = await client.get_inventory_mode()
     assert config.mode is InventoryMode.EPC_TID_USER
     assert config.user_address == 2
@@ -195,9 +218,16 @@ async def test_antenna_mask_roundtrip(client: ChainwayClient) -> None:
     assert await client.get_antenna_mask() == 0x0102
 
 
-async def test_antenna_work_time_roundtrip(client: ChainwayClient) -> None:
+async def test_antenna_work_time_roundtrip(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
     await client.set_antenna_work_time(1, 200, save=False)
+    assert received(logic, Command.SET_ANTENNA_WORK_TIME) == b"\x01\x00\xc8"
     assert await client.get_antenna_work_time(1) == 200
+    await client.set_antenna_work_time(2, 300, save=True)
+    assert received(logic, Command.SET_ANTENNA_WORK_TIME) == b"\x12\x01\x2c"
+    assert await client.get_antenna_work_time(2) == 300
 
 
 async def test_fast_inventory_mode_sends_the_documented_payload(
@@ -216,8 +246,12 @@ async def test_reset_commands(client: ChainwayClient) -> None:
     await client.restore_factory_settings()
 
 
-async def test_single_inventory(client: ChainwayClient) -> None:
+async def test_single_inventory(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
     tag = await client.single_inventory()
+    assert received(logic, Command.SINGLE_INVENTORY) == b"\x00\x64"
     assert tag is not None
     assert tag.epc == bytes(range(1, 13))
     assert tag.rssi == -29.8
@@ -258,9 +292,18 @@ async def test_write_tag_rejects_odd_data(client: ChainwayClient) -> None:
         await client.write_tag(MemoryBank.USER, 2, b"\xe2")
 
 
-async def test_block_write_and_erase(client: ChainwayClient) -> None:
+async def test_block_write_and_erase(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
     await client.block_write_tag(MemoryBank.USER, 2, b"\xe2\x80")
+    assert received(logic, Command.BLOCK_WRITE_TAG) == (
+        b"\x00\x00\x00\x00\x01\x00\x00\x00\x00\x03\x00\x02\x00\x01\xe2\x80"
+    )
     await client.block_erase_tag(MemoryBank.USER, 2, 1)
+    assert received(logic, Command.BLOCK_ERASE_TAG) == (
+        b"\x00\x00\x00\x00\x01\x00\x00\x00\x00\x03\x00\x02\x00\x01"
+    )
 
 
 async def test_lock_tag_sends_the_documented_lock_code(
@@ -395,17 +438,32 @@ async def test_collected_tag_counts_and_delete(client: ChainwayClient) -> None:
     assert collected == (b"\x11\x22\x33\x44\x55\x66", b"\xaa\xbb\xcc\xdd")
 
 
-async def test_reader_address_with_mask_and_gateway(client: ChainwayClient) -> None:
+async def test_reader_address_with_mask_and_gateway(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
     await client.set_reader_address(
         ReaderAddress(ip="10.0.0.5", port=5000, subnet_mask="255.255.255.0", gateway="10.0.0.1")
     )
-
-
-async def test_destination_address(client: ChainwayClient) -> None:
-    await client.set_destination_address(ReaderAddress(ip="192.168.99.50", port=5084))
-    address = await client.get_destination_address()
-    assert address.ip == "192.168.99.201"
+    assert received(logic, Command.CONFIG) == (
+        b"\x01\x0a\x00\x00\x05\x13\x88\xff\xff\xff\x00\x0a\x00\x00\x01"
+    )
+    address = await client.get_reader_address()
+    assert address.ip == "10.0.0.5"
     assert address.port == 5000
+    assert address.subnet_mask == "255.255.255.0"
+    assert address.gateway == "10.0.0.1"
+
+
+async def test_destination_address(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    await client.set_destination_address(ReaderAddress(ip="192.168.99.50", port=5084))
+    assert received(logic, Command.CONFIG) == b"\x03\xc0\xa8\x63\x32\x13\xdc"
+    address = await client.get_destination_address()
+    assert address.ip == "192.168.99.50"
+    assert address.port == 5084
 
 
 async def test_work_mode_roundtrip(client: ChainwayClient) -> None:
@@ -425,7 +483,10 @@ async def test_gpo_roundtrip(client: ChainwayClient) -> None:
     assert state.output_1 is False
 
 
-async def test_trigger_config_roundtrip(client: ChainwayClient) -> None:
+async def test_trigger_config_roundtrip(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
     config = TriggerConfig(
         input=TriggerInput.INPUT_2,
         work_time_ms=1000,
@@ -433,6 +494,7 @@ async def test_trigger_config_roundtrip(client: ChainwayClient) -> None:
         output=OutputRoute.UDP,
     )
     await client.set_trigger_config(config)
+    assert received(logic, Command.CONFIG) == b"\x0b\x01\x00\x64\x00\x0a\x01\x00"
     assert await client.get_trigger_config() == config
 
 
@@ -453,20 +515,32 @@ async def test_scan_barcode_with_data(
     assert await client.scan_barcode() == b"12345678"
 
 
-async def test_beep(client: ChainwayClient) -> None:
+async def test_beep(client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]) -> None:
+    logic, _ = reader_server
     await client.beep(2)
+    assert received(logic, Command.PERIPHERAL) == b"\x03\x01\x02"
 
 
-async def test_led(client: ChainwayClient) -> None:
+async def test_led(client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]) -> None:
+    logic, _ = reader_server
     await client.set_led(enabled=True)
+    assert received(logic, Command.PERIPHERAL) == b"\x07\x01\x00\x00\x00"
     await client.blink_led(10, 20, 30)
+    assert received(logic, Command.PERIPHERAL) == b"\x07\x02\x0a\x14\x1e"
 
 
-async def test_firmware_update_flow(client: ChainwayClient) -> None:
+async def test_firmware_update_flow(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
     await client.jump_to_bootloader()
+    assert received(logic, Command.JUMP_TO_BOOTLOADER) == b"\xcc"
     await client.start_update()
+    assert received(logic, Command.START_UPDATE) == b""
     await client.send_update_block(b"\x01\x02\x03")
+    assert received(logic, Command.UPDATE_BLOCK) == b"\x01\x02\x03" + b"\x00" * 61
     await client.stop_update()
+    assert received(logic, Command.STOP_UPDATE) == b""
 
 
 async def test_inventory_streams_tags_and_stops(
@@ -747,7 +821,7 @@ async def test_inventory_keepalive_sends_the_bare_byte(
         await client.start_inventory()
         await asyncio.sleep(0.3)
         assert Command.GET_VERSION not in commands_seen(logic)
-        assert b"\x00" in b"".join(logic.raw)
+        assert b"\x00" in logic.raw
     finally:
         await client.stop_inventory()
         await client.disconnect()

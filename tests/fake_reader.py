@@ -50,6 +50,12 @@ class FakeReaderLogic:
         self.failing_tag_commands: set[int] = set()
         self.junk_on_connect = b""
         self.protocol_type = 0x00
+        self.region = 0x08
+        self.rf_link = 0x02
+        self.fast_id = 0x01
+        self.tag_focus = 0x01
+        self.reader_address = b"\xc0\xa8\x63\xc8\x22\xb8"
+        self.destination_address = b"\xc0\xa8\x63\xc9\x13\x88"
         self.inventory_mode = b"\x02\x00\x04"
         self.antenna_mask = b"\x00\x01"
         self.work_mode = 0x00
@@ -73,18 +79,18 @@ class FakeReaderLogic:
             Command.GET_POWER: lambda _payload: self.power_payload,
             Command.SET_FIXED_FREQUENCY: lambda _payload: b"\x01",
             Command.GET_FIXED_FREQUENCY: lambda _payload: self.fixed_frequency_payload,
-            Command.SET_REGION: lambda _payload: b"\x01",
-            Command.GET_REGION: lambda _payload: b"\x01\x08",
+            Command.SET_REGION: self._store_region,
+            Command.GET_REGION: lambda _payload: b"\x01" + bytes((self.region,)),
             Command.SET_CARRIER_WAVE: lambda _payload: b"\x01",
             Command.GET_RETURN_LOSS: lambda _payload: self.return_loss_payload,
-            Command.SET_GEN2_PARAMETERS: lambda _payload: b"\x01",
+            Command.SET_GEN2_PARAMETERS: self._store_gen2_parameters,
             Command.GET_GEN2_PARAMETERS: lambda _payload: self.gen2_payload,
-            Command.SET_RF_LINK: lambda _payload: b"\x01",
-            Command.GET_RF_LINK: lambda _payload: b"\x01\x00\x02",
-            Command.SET_FAST_ID: lambda _payload: b"\x01",
-            Command.GET_FAST_ID: lambda _payload: b"\x01\x01",
-            Command.SET_TAG_FOCUS: lambda _payload: b"\x01",
-            Command.GET_TAG_FOCUS: lambda _payload: b"\x00\x01",
+            Command.SET_RF_LINK: self._store_rf_link,
+            Command.GET_RF_LINK: lambda _payload: b"\x01\x00" + bytes((self.rf_link,)),
+            Command.SET_FAST_ID: self._store_fast_id,
+            Command.GET_FAST_ID: lambda _payload: b"\x01" + bytes((self.fast_id,)),
+            Command.SET_TAG_FOCUS: self._store_tag_focus,
+            Command.GET_TAG_FOCUS: lambda _payload: b"\x00" + bytes((self.tag_focus,)),
             Command.SET_PROTOCOL_TYPE: self._respond_protocol_type,
             Command.SET_INVENTORY_FILTER: lambda _payload: b"\x01",
             Command.SET_INVENTORY_MODE: self._store_inventory_mode,
@@ -115,11 +121,11 @@ class FakeReaderLogic:
             Command.STOP_UPDATE: lambda _payload: b"\x01",
         }
         self._config_responders: dict[int, Responder] = {
-            ConfigSubcommand.SET_READER_ADDRESS: lambda _payload: b"\x01",
-            ConfigSubcommand.GET_READER_ADDRESS: lambda _payload: b"\x02\xc0\xa8\x63\xc8\x22\xb8",
-            ConfigSubcommand.SET_DESTINATION_ADDRESS: lambda _payload: b"\x01",
+            ConfigSubcommand.SET_READER_ADDRESS: self._store_reader_address,
+            ConfigSubcommand.GET_READER_ADDRESS: lambda _payload: b"\x02" + self.reader_address,
+            ConfigSubcommand.SET_DESTINATION_ADDRESS: self._store_destination_address,
             ConfigSubcommand.GET_DESTINATION_ADDRESS: lambda _payload: (
-                b"\x04\xc0\xa8\x63\xc9\x13\x88"
+                b"\x04" + self.destination_address
             ),
             ConfigSubcommand.SET_WORK_MODE: self._store_work_mode,
             ConfigSubcommand.GET_WORK_MODE: lambda _payload: b"\x06" + bytes((self.work_mode,)),
@@ -287,6 +293,34 @@ class FakeReaderLogic:
 
     def _store_volume(self, payload: bytes) -> bytes:
         self.volume = payload[1]
+        return b"\x01"
+
+    def _store_region(self, payload: bytes) -> bytes:
+        self.region = payload[1]
+        return b"\x01"
+
+    def _store_gen2_parameters(self, payload: bytes) -> bytes:
+        self.gen2_payload = payload
+        return b"\x01"
+
+    def _store_rf_link(self, payload: bytes) -> bytes:
+        self.rf_link = payload[2]
+        return b"\x01"
+
+    def _store_fast_id(self, payload: bytes) -> bytes:
+        self.fast_id = payload[0]
+        return b"\x01"
+
+    def _store_tag_focus(self, payload: bytes) -> bytes:
+        self.tag_focus = payload[0]
+        return b"\x01"
+
+    def _store_reader_address(self, payload: bytes) -> bytes:
+        self.reader_address = payload[1:]
+        return b"\x01"
+
+    def _store_destination_address(self, payload: bytes) -> bytes:
+        self.destination_address = payload[1:]
         return b"\x01"
 
     def _cancel_inventory(self) -> None:
