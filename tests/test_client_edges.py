@@ -8,6 +8,8 @@ from chainway_serial import (
     ChainwayClient,
     ChainwayConnectionError,
     ChainwayResponseError,
+    ChainwayTimeoutError,
+    FirmwareVersion,
     InventoryMode,
     MemoryBank,
     ProtocolType,
@@ -170,7 +172,7 @@ async def test_block_write_rejects_odd_data(client: ChainwayClient) -> None:
         await client.block_write_tag(MemoryBank.USER, 2, b"\xe2")
 
 
-async def test_get_reader_address_roundtrip(client: ChainwayClient) -> None:
+async def test_get_reader_address_returns_the_configured_default(client: ChainwayClient) -> None:
     address = await client.get_reader_address()
     assert address.ip == "192.168.99.200"
     assert address.port == 8888
@@ -225,7 +227,7 @@ async def test_stop_inventory_without_a_queue(client: ChainwayClient) -> None:
     assert client.inventory_active is False
 
 
-async def test_iterator_raises_when_the_queue_was_cleared(
+async def test_external_stop_after_a_yield_ends_the_iterator(
     client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
 ) -> None:
     logic, _ = reader_server
@@ -233,7 +235,7 @@ async def test_iterator_raises_when_the_queue_was_cleared(
     stream = client.inventory()
     await _anext(stream)
     await client.stop_inventory()
-    with pytest.raises(ChainwayConnectionError, match="the link was lost"):
+    with pytest.raises(StopAsyncIteration):
         await _anext(stream)
     await stream.aclose()
 
@@ -250,6 +252,46 @@ async def test_external_stop_ends_a_waiting_iterator(
     with pytest.raises(StopAsyncIteration):
         await consumer
     await stream.aclose()
+
+
+async def test_inventory_raises_when_the_start_lost_the_link(
+    client: ChainwayClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def lost_start(*, phase: bool = False) -> None:  # noqa: ARG001
+        return
+
+    monkeypatch.setattr(client, "start_inventory", lost_start)
+    stream = client.inventory()
+    with pytest.raises(ChainwayConnectionError, match="the link was lost"):
+        await _anext(stream)
+
+
+async def test_a_failed_stop_still_clears_the_scan_and_releases_the_iterator(
+    reader_server: tuple[FakeReaderLogic, int],
+) -> None:
+    logic, port = reader_server
+    logic.tags_to_stream = []
+    client = ChainwayClient(
+        f"socket://127.0.0.1:{port}",
+        response_timeout=0.2,
+        keepalive_interval=60.0,
+        dead_link_timeout=60.0,
+    )
+    await client.connect()
+    stream = client.inventory()
+    consumer = asyncio.create_task(_anext(stream))
+    await asyncio.sleep(0.05)
+    logic.silent_commands = {Command.STOP_INVENTORY}
+    try:
+        with pytest.raises(ChainwayTimeoutError, match="no response"):
+            await client.stop_inventory()
+        with pytest.raises(StopAsyncIteration):
+            await consumer
+        assert client.inventory_active is False
+        assert await client.get_version() == FirmwareVersion(1, 2, 3)
+    finally:
+        await stream.aclose()
+        await client.disconnect()
 
 
 async def test_response_for_a_done_future_is_ignored(client: ChainwayClient) -> None:
@@ -315,5 +357,35 @@ async def test_failing_callback_task_logs_and_continues(
         logic.push(build_frame(0x83, b"\x30\x00" + bytes(range(1, 13)) + b"\xfe\xd6\x00"))
         await asyncio.sleep(0.1)
         assert client.connected is True
+    finally:
+        await client.disconnect()
+
+
+async def test_failing_sync_on_tag_callback_is_contained(
+    reader_server: tuple[FakeReaderLogic, int],
+) -> None:
+    logic, port = reader_server
+    seen: list[bytes] = []
+
+    def on_tag(tag: object) -> None:
+        seen.append(tag.epc)  # type: ignore[attr-defined]
+        msg = "callback boom"
+        raise RuntimeError(msg)
+
+    client = ChainwayClient(
+        f"socket://127.0.0.1:{port}",
+        keepalive_interval=60.0,
+        dead_link_timeout=60.0,
+        on_tag=on_tag,
+    )
+    await client.connect()
+    try:
+        await wait_for_server(logic)
+        assert logic.push is not None
+        record = b"\x30\x00" + bytes(range(1, 13)) + b"\xfe\xd6\x00"
+        logic.push(build_frame(0x83, record) + build_frame(0x83, record))
+        await asyncio.sleep(0.05)
+        assert seen == [bytes(range(1, 13)), bytes(range(1, 13))]
+        assert await client.get_version() == FirmwareVersion(1, 2, 3)
     finally:
         await client.disconnect()

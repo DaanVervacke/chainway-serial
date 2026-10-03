@@ -262,6 +262,7 @@ class ChainwayClient:
             await self._teardown()
 
     async def __aenter__(self) -> Self:
+        """Open the link and return the client."""
         await self.connect()
         return self
 
@@ -271,6 +272,7 @@ class ChainwayClient:
         exc_value: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
+        """Close the link when the context exits."""
         await self.disconnect()
 
     async def get_version(self) -> FirmwareVersion:
@@ -649,16 +651,30 @@ class ChainwayClient:
             await asyncio.sleep(INVENTORY_START_DELAY)
 
     async def stop_inventory(self) -> None:
-        """Stop a running continuous inventory. A no-op when idle."""
+        """Stop a running continuous inventory. A no-op when idle.
+
+        The scan state clears and the iterator is released even when
+        the stop command fails. The command error still propagates
+        to the caller.
+
+        Raises:
+            ChainwayTimeoutError: The reader did not acknowledge the
+                stop in time.
+            ChainwayResponseError: The reader did not acknowledge the
+                stop.
+            ChainwayConnectionError: The link dropped while stopping.
+        """
         if not self._inventory_active:
             return
-        payload = await self._request(Command.STOP_INVENTORY, allow_during_inventory=True)
-        _require_ack(payload, Command.STOP_INVENTORY)
-        self._finish_inventory()
-        queue = self._tag_queue
-        self._tag_queue = None
-        if queue is not None:
-            queue.put_nowait(_LinkClosed(None))
+        try:
+            payload = await self._request(Command.STOP_INVENTORY, allow_during_inventory=True)
+            _require_ack(payload, Command.STOP_INVENTORY)
+        finally:
+            self._finish_inventory()
+            queue = self._tag_queue
+            self._tag_queue = None
+            if queue is not None:
+                queue.put_nowait(_LinkClosed(None))
 
     async def inventory(self, *, phase: bool = False) -> AsyncGenerator[Tag]:
         """Yield tag sightings from a continuous inventory run.
@@ -675,12 +691,12 @@ class ChainwayClient:
             ChainwayConnectionError: The link dropped mid-scan.
         """
         await self.start_inventory(phase=phase)
+        queue = self._tag_queue
+        if queue is None:
+            msg = "the link was lost"
+            raise ChainwayConnectionError(msg)
         try:
             while True:
-                queue = self._tag_queue
-                if queue is None:
-                    msg = "the link was lost"
-                    raise ChainwayConnectionError(msg)
                 item = await queue.get()
                 if isinstance(item, _LinkClosed):
                     if item.error is not None:
@@ -688,7 +704,7 @@ class ChainwayClient:
                     return
                 yield item
         finally:
-            if self._inventory_active:
+            if self._inventory_active and self._tag_queue is queue:
                 with suppress(ChainwayError):
                     await self.stop_inventory()
 
@@ -1320,7 +1336,11 @@ class ChainwayClient:
         callback: Callable[[CallbackArgument], Awaitable[None] | None],
         argument: CallbackArgument,
     ) -> None:
-        result = callback(argument)
+        try:
+            result = callback(argument)
+        except Exception:
+            _LOGGER.exception("callback failed")
+            return
         if isinstance(result, Coroutine):
             task = asyncio.create_task(result)
             self._callback_tasks.add(task)
