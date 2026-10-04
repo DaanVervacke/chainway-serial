@@ -15,9 +15,11 @@ Where the Android AAR and the Java jar disagree on a payload byte, the Windows D
 
 | Transport | Parameters |
 |---|---|
-| TCP | Port 8888. Default reader address 192.168.99.200 (demo configs also use 192.168.99.112 and .202). Raw byte stream. |
+| TCP | Port 8888. Default reader address 192.168.99.202 per the vendor UR4 manual, Simple Fixed Reader User Manual (UR4, UR8, UR1A), 2023-04-28. SDK demo configs use 192.168.99.200 and 192.168.99.112. Raw byte stream. |
 | RS-232 | 115200 baud, 8 data bits, 1 stop bit, no parity, no flow control. Custom rates possible, 115200 is the default. |
 | USB HID | Windows SDK only. Not covered. |
+
+The vendor datasheet and manual list RS-232 (115200 bps), RJ45 and GPIO as the only UR4 interfaces. They advertise no RS-485 and no USB. The manual states that the reader in the same LAN broadcasts its IP and MAC address, matching the UDP discovery below, and that the serial link can query the device IP.
 
 The frame format and command set are identical on TCP and RS-232. Both pure-Java SDKs feed every transport into the same frame parser, and the parser resynchronizes on the frame header, so partial reads and chunking are harmless.
 
@@ -35,6 +37,8 @@ Offset  Size  Field
 
 The official protocol document lists `C8 8C` as equally valid next to `A5 5A`, and the vendor's native receiver hunts both. This library sends `A5 5A`, like the Android SDK and the Windows DLL, and its parser accepts both. Which header the UR4 answers with is **unverified**. The Java SDKs reject frames above 2048 bytes, the native library accepts up to 4096, so the window is **unverified** at the top end.
 
+The Windows `UHFAPI.dll` (64-bit build identical to the Java demo copy, 32-bit build in the C# app, same 458 exports) has two receive paths. The stream framer behind the read thread, used on serial, TCP, UDP and USB, accepts `A5` or `C8` as byte 0 and `5A` or `8C` as byte 1, checked independently, so a mixed pair would pass too. It takes lengths from 8 to 4096, XORs from the length bytes through the payload, requires `0D 0A`, and resets to the header hunt on any violation without rewinding to the byte after the header. The command response helper behind the `*_RecvData` builders accepts only `A5 5A` and 8 to 2048 bytes, and rejects a response unless its command equals the request command plus one. The DLL sends `A5 5A` for every command and no `C8 8C` appears in its code. Its static frames are the stop `A5 5A 00 08 8C 84 0D 0A` and the start `A5 5A 00 0A 82 00 00 88 0D 0A`, so the `27 10` start payload is specific to the npm client. The vendor clients therefore prove what the host accepts and sends, not what the firmware answers with.
+
 Worked examples:
 
 | Purpose | Bytes | Checksum |
@@ -51,6 +55,7 @@ Worked examples:
 | Kill tag, see 0x8A | `A5 5A 00 11 8A 12 34 56 78 01 00 00 00 00 92 0D 0A` | XOR over length, command and payload |
 | Set tag filter, see 0x6E | `A5 5A 00 10 6E 00 01 00 20 00 10 12 34 69 0D 0A` | XOR over length, command and payload |
 | Read collected tags, see 0xE0 | `A5 5A 00 08 E0 E8 0D 0A` | 00 ^ 08 ^ E0 = E8 |
+| Read full collected tags, see 0xE2 | `A5 5A 00 09 E2 01 EA 0D 0A` | 00 ^ 09 ^ E2 ^ 01 = EA |
 | Get device ID | `A5 5A 00 08 04 0C 0D 0A` | 00 ^ 08 ^ 04 = 0C |
 | Get fixed frequency | `A5 5A 00 08 16 1E 0D 0A` | 00 ^ 08 ^ 16 = 1E |
 | Get return loss | `A5 5A 00 08 26 2E 0D 0A` | 00 ^ 08 ^ 26 = 2E |
@@ -306,16 +311,52 @@ Imager module settings with two subchannels, 118 and 119, and an ack convention 
 | `04 77 03 00 9F v` | Write a 119 parameter, v = 0 or 1 |
 | `05 b 00 00` | Read user settings block b |
 
+The Windows DLL exposes four subcommands of 0xF0, with a 3000 ms timeout for upload and download and 1500 ms for the others. Sub `01` is upload user parameters, payload `01 data`, acknowledged by `01 00`. Sub `02` is download, request `02`, response `02 00 data`. Sub `03` sets BLE parameters, payload `03 data`, acknowledged by `03 00`. Sub `04` sets parameters, payload `04 data`, acknowledged by `04 00`. The DLL's `ScannerRead` sends 0xE4 subs `02` and `00` with a 16-bit field, not decoded.
+
 ### Firmware update
 
 | Command | Request payload | Meaning |
 |---|---|---|
-| 0xC0 | `CC` | Jump to bootloader, the SDK passes 0xCC to reboot into the update mode |
+| 0xC0 | 1 byte target selector | Jump to the bootloader of one firmware target |
 | 0xC2 | empty | Start the update |
-| 0xC4 | 64-byte block | Send one firmware block, padded with zeros past the end of the image |
+| 0xC4 | 64-byte block | Send one firmware block |
 | 0xC6 | empty | Stop the update |
 
-All four answer payload `01`. Block order and image format **unverified**, the SDK sends raw 64-byte blocks.
+The 0xC0 payload selects the target. The Android AAR, the C# demo, `libTagReader.so` and the Windows DLL map a flag to a byte, and the Java jar only knows flag 1.
+
+| Flag | Byte | Target | Version read first |
+|---|---|---|---|
+| 0 | `EE` | Mainboard, the reader application on the STM32 | 0xC8 |
+| 1 | `CC` | UHF module | 0x02 |
+| 2 | `BB` | Reader bootloader | none |
+| 3 | `AA` | Ex10 SDK firmware | none |
+
+The manual's "Motherboard Firmware" and "UHF Firmware" options most likely correspond to flags 0 and 1. The Android demo offers flags 0 and 1, the Java demo only flag 1, and the C# demo offers all four.
+
+The vendor sequence:
+
+1. Read the current version.
+2. Send 0xC0 with the selector and wait 2000 ms.
+3. For a target other than the UHF module on TCP or USB, the C# demo drops the link, waits about 1000 ms and reconnects. The Android SDK does the same for the mainboard target. The Java SDK does not.
+4. Send 0xC2 and wait 2000 ms.
+5. Send the image as consecutive 0xC4 blocks of 64 bytes with no sequence number, offset or per-block checksum. The C# demo pauses 5 ms between blocks and the Java SDK waits up to 5000 ms for each reply. Any failure aborts and sends 0xC6.
+6. Send 0xC6, wait 2000 ms and read the version again.
+
+The Java and Android SDKs expect the replies 0xC1, 0xC3, 0xC5 and 0xC7 with payload `01`. The native libraries do not wait for the 0xC6 reply, so whether the firmware answers it is **unverified**. The image is the raw `.bin` file with no host-side header. The only image in the vendor archives, `Ex10 V2.0.0.bin`, is 160804 bytes and looks encrypted. The vendor download URL names a four channel CM710-4 mainboard image. The Java and Android SDKs zero-pad the last block to 64 bytes, the Windows DLL export used by the C# demo sends the short tail with its real length, and both forms are **unverified** on the firmware.
+
+Worked frames:
+
+| Frame | Bytes |
+|---|---|
+| Jump to the UHF module | `A5 5A 00 09 C0 CC 05 0D 0A` |
+| Jump to the mainboard | `A5 5A 00 09 C0 EE 27 0D 0A` |
+| Jump to the reader bootloader | `A5 5A 00 09 C0 BB 72 0D 0A` |
+| Jump to Ex10 | `A5 5A 00 09 C0 AA 63 0D 0A` |
+| Start update | `A5 5A 00 08 C2 CA 0D 0A` |
+| Stop update | `A5 5A 00 08 C6 CE 0D 0A` |
+| Short tail block of 4 bytes | `A5 5A 00 0C C4 01 02 03 04 CC 0D 0A` |
+
+The Ax Android readers have a separate TCP upgrade service with an APK upload, file size and MD5. It is not part of this flow.
 
 ## Other product lines
 
@@ -324,18 +365,66 @@ The shared SDK code bases carry commands for other Chainway products. They are d
 | Command | Request payload | Response | Meaning |
 |---|---|---|---|
 | 0xE5 | `04 mode` | 0xE6, payload `01` | R6 work mode |
+| 0xF2 | HF commands | | The DLL uses it for every HF, ISO 15693 and smart card export. Another product line |
+
+The DLL also routes an incoming 0x7F frame like 0x83 into the tag queue, with a payload of at least 4 bytes and a different type flag, and treats 0xEC specially as split content data. No export sends 0x7F and its payload is not decoded.
 
 ## Module-level protocol
 
-The official protocol document V2.1.2 describes the UHF module protocol, one layer below the reader protocol. The frame format and the tag operation commands are shared, and this library implements the module-level command subset next to the reader protocol. The commands below appear in the document but in none of the two Java SDKs, so whether the UR4 reader firmware forwards them is **unverified**: get device ID (0x04), get fixed frequency (0x16), get return loss (0x26), software reset (0x68), authenticate tag (0x8E) and block permalock (0x9F).
+The official protocol document V2.1.2 describes the UHF module protocol, one layer below the reader protocol. The frame format and the tag operation commands are shared, and this library implements the module-level command subset next to the reader protocol. The commands below appear in the document but in none of the two Java SDKs: get device ID (0x04), get fixed frequency (0x16), get return loss (0x26), software reset (0x68), authenticate tag (0x8E) and block permalock (0x9F). The vendor's native Linux library `libTagReader.so` from the UR4 Java demo builds all six, as `UHFGetDeviceID`, `UHFGetJumpFrequency`, `UHFGetCW`, `UHFSetSoftReset`, `UHFAuthenticate` and `UHFBlockPermalock`. Whether the UR4 reader firmware answers them is still **unverified**.
 
 The deltas between the two layers:
 
 - The document's examples all use the `C8 8C` header.
-- At module level 0x68 is the software reset and 0x74 the factory reset, while the SDKs know only 0x74 and call it the soft reset. The library implements both commands per the document. Which behavior the UR4 firmware implements for 0x74 is **unverified**
+- At module level 0x68 is the software reset and 0x74 the factory reset, while the Java SDKs know only 0x74 and call it the soft reset. The Android native libraries `libDeviceAPIM.so` and `libDeviceAPIQ.so` (DeviceAPI 20250209) build 0x68 as their soft reset frame, `A5 5A 00 08 68 60 0D 0A`, and contain no 0x74 builder. The library implements both commands per the document. Which behavior the UR4 firmware implements for 0x74 is **unverified**
 - Tag operation error responses carry an error flag after the success flag: 0x01 means the operation failed and 0x22 means the tag could not be recognized.
 - The document defines 0x26 as get return loss. Both Java SDKs read the first payload byte of the 0x27 response as a carrier wave on/off state, which is the port-1 number of the return loss layout. The library follows the document.
 - Commands 0xA1 through 0xFF are reserved at module level. The reader protocol uses them: the 0xA1 configuration family, the 0xE4 peripherals and the 0xE0 collected tag pull exist only at reader level.
+
+## Native library command catalog
+
+`libTagReader.so` in the Java UR4 and UR1A demo (v1.1, 2024-08-23) is the Linux counterpart of the Windows `UHFAPI.dll`. It ships with debug symbols, so parameter names come from DWARF. Every function funnels into one send and receive routine that takes the command byte, a payload length and the payload, which makes the opcode of each function readable from the disassembly. The table lists the builders for opcodes that this document did not cover before. Nothing here is verified against a UR4. The demo ships the library for the UR4 and UR1A, so the opcodes are at least intended for these readers.
+
+Map generation: the library carries opcodes of both document revisions. It has the V2.0.8 QT commands 0x97 to 0x9D and the temperature protection pair 0x38 and 0x3A, and it also has 0x4E as antenna link status, the V2.1.2 meaning. It names 0x26 get CW, the V2.0.8 meaning. Opcode 0x74 is `UHFSetDefaultMode` next to 0x68 `UHFSetSoftReset`, which matches the V2.1.2 split into factory reset and soft reset.
+
+In the layouts below `filter` is `bank(1) addr(2) len_bits(2) data(ceil(len_bits/8))`, multi-byte fields are big-endian, and "ok" means the first reply payload byte is `01`. Every example frame was recomputed with the XOR rule.
+
+| Opcode | Native function | Request payload | Reply parsing | Example frame |
+|---|---|---|---|---|
+| 0x18 | `UHF_Set_Param` | `type(1) ID(4) data(4)` | ok | `A5 5A 00 11 18 01 00 00 00 01 00 00 00 02 0B 0D 0A` |
+| 0x1A | `UHF_Get_Param` | `type(1) ID(4)` | ok, then 4 data bytes after the echoed ID, shape inferred | `A5 5A 00 0D 1A 01 00 00 00 01 17 0D 0A` |
+| 0x30 | `UHF_Inventory_Bank` | `pwd(4) bank(1) ptr(2) cnt(2)` | ok | `A5 5A 00 11 30 00 00 00 00 03 00 00 00 04 26 0D 0A` |
+| 0x38 | `UHFSetTemperatureProtect`, `UHFSetTempVal` | 1 byte, flag or temperature value | ok | `A5 5A 00 09 38 01 30 0D 0A` |
+| 0x3A | `UHFGetTemperatureProtect`, `UHFGetTempVal` | empty | ok, then the value | `A5 5A 00 08 3A 32 0D 0A` |
+| 0x3C | `UHFSetWorkTime` | `DByte4 .. DByte0`, 5 bytes | ok | `A5 5A 00 0D 3C 00 00 00 01 F4 C4 0D 0A` |
+| 0x3E | `UHFGetWorkTime` | empty | ok, then 4 bytes | `A5 5A 00 08 3E 36 0D 0A` |
+| 0x6A | `UHFSetDualSingelMode` | `save(1) mode(1)` | ok | `A5 5A 00 0A 6A 01 01 60 0D 0A` |
+| 0x6C | `UHFGetDualSingelMode` | empty | ok, then the mode | `A5 5A 00 08 6C 64 0D 0A` |
+| 0x08 | `UHFVerifyVoltage` | `01` | `01 01 value(2)`, signed | `A5 5A 00 09 08 01 00 0D 0A` |
+| 0x97 | `UHFSetQT` | `pwd(4) filter QTData(1)` | ok | `A5 5A 00 14 97 00 00 00 00 01 00 20 00 10 E2 80 01 D1 0D 0A` |
+| 0x99 | `UHFGetQT` | `pwd(4) filter` | ok, then QTData | `A5 5A 00 13 99 00 00 00 00 01 00 20 00 10 E2 80 D9 0D 0A` |
+| 0x9B | `UHFReadQT` | `pwd(4) filter QTData(1) rbank(1) rptr(2) rcnt(2)` | `01 00 words(2) data(words*2)` | `A5 5A 00 19 9B 00 00 00 00 01 00 20 00 10 E2 80 01 03 00 00 00 02 D1 0D 0A` |
+| 0x9D | `UHFWriteQT` | as 0x9B with `rcnt*2` data bytes appended | `01 00` | `A5 5A 00 1B 9D 00 00 00 00 01 00 20 00 10 E2 80 01 03 00 00 00 01 12 34 F0 0D 0A` |
+| 0xB0 | `UHFDeactivate` | `cmd(2) pwd(4) filter` | ok | `A5 5A 00 15 B0 00 00 00 00 00 00 01 00 20 00 10 E2 80 F6 0D 0A` |
+| 0xB2 | `UHFDwell` | `dwell(4) count(4)` | ok | `A5 5A 00 10 B2 00 00 03 E8 00 00 00 03 4A 0D 0A` |
+
+The QT commands are the V2.0.8 Impinj Monza QT operations. The `UHF_ReadQTDataSingle` and `UHF_WriteQTDataSingle` wrappers run a single inventory (0x80 `00 64`) before the 0x9B or 0x9D frame. The native read count byte truncates above 255 bytes.
+
+Sensor and calibration, opcode 0x7C. The request is `sub(1) EPC(16) ant(1) power(2)` with the EPC zero padded, and the reply is `01 00 words(2) data(words*2)`. The sub operations are 01 sensor code, 02 get calibration, 03 on-chip RSSI, 04 temperature code, 05 RSSI plus temperature code and 06 write calibration, which appends 8 data bytes. Example, sub 03 with antenna 1 and power 0x0BB8: `A5 5A 00 1C 7C 03 E2 80 11 60 60 00 02 05 6B 3A 5A 1E 00 00 00 00 01 0B B8 B0 0D 0A`.
+
+Tag sensor operations, opcode 0xA3. The first payload byte selects the function and the second part is `bank(1) addr(2) len_bits(2) data` as a mask filter.
+
+| Sub | Native function | Extra payload | Reply | Example |
+|---|---|---|---|---|
+| 03 | `UHFStartLogging` | `min(2) max(2) delay(2) interval(2)`, min and max are 10-bit temperature codes | ok, otherwise a nonzero error code in the second byte | `A5 5A 00 18 A3 03 01 00 20 00 10 E2 80 00 50 00 7A 00 00 00 0A CB 0D 0A` |
+| 04 | `UHFStopLogging` | none | as sub 03 | `A5 5A 00 10 A3 04 01 00 20 00 10 E2 80 E4 0D 0A` |
+| 05 | `UHFCheckOpMode` | none | `05 value(2)` | `A5 5A 00 10 A3 05 01 00 20 00 10 E2 80 E5 0D 0A` |
+| 06 | `UHFReadTagVoltage` | none | `06 raw(2)`, volts = raw x 2.5 / 8192 | `A5 5A 00 10 A3 06 01 00 20 00 10 E2 80 E6 0D 0A` |
+| 07 | `UHFReadMultiTemp` | `t_start(2) t_num(1)` | `07 total(2) returnNum(1)` then one 4-byte record per tag, with a little-endian 10-bit code in the first two bytes | `A5 5A 00 13 A3 07 01 00 20 00 10 E2 80 00 00 04 E0 0D 0A` |
+
+The 10-bit temperature code is a signed fixed point value, 8 bits of whole degrees Celsius and 2 bits of quarter degrees, so 20.0 C is 0x050 and 30.5 C is 0x07A. The library's decoder may be off by one degree for negative fractions. The 0xA3 sub 03 layout comes from the disassembly only, and the 0x1A reply shape is inferred. The other layouts match emulated builder output. The DWARF parameter names of `UHFStartLogging` do not match the register order in the code.
+
+The Windows DLL carries the same 0x38, 0x3C, 0x6A, 0x7C, 0x97 to 0x9D, 0xA3, 0xB0 and 0xB2 builders and lacks 0x18, 0x1A and 0x30.
 
 ## Third-party implementations
 
@@ -387,7 +476,7 @@ The reader broadcasts a 12-byte UDP packet to port 1111:
 MAC(6) | IPv4(4) | TCP port(2, big-endian)
 ```
 
-The Java SDK listens on port 1111 and reports every reader that announces itself. The Windows DLL has matching BindUDP and UnbindUDP entry points.
+The Java SDK listens on port 1111 and reports every reader that announces itself. The C# demo binds 0.0.0.0:1111 with a 500 ms receive timeout, accepts datagrams of at least 12 bytes and drops a device after 30 seconds without a packet. Tag data pushed in auto mode over UDP arrives as the same 0x83 frames as on the serial link, read through the DLL's `BindUDP`. The Windows DLL has matching BindUDP and UnbindUDP entry points.
 
 ## Work modes
 
@@ -399,9 +488,13 @@ Set with 0xA1 sub 05.
 | 1 | Auto mode | The reader inventories on its own, using the trigger parameters as timing. Tag output goes to the link or UDP depending on the output routing parameter |
 | 2 | Trigger mode | A signal on GPI input 1 or 2 starts an inventory run for the configured work time. Output routing applies here too |
 
+From the vendor manual: the start and stop conditions in trigger mode must be opposite levels, for example start on a high level at input 1 and stop on a low level with a configurable delay such as 1000 ms. In auto mode the reader starts inventory on power up and sends tag data over UDP to the configured target IP and port, which is the output routing parameter. A factory reset restores the IP settings and the work mode. The factory defaults are antenna 1 enabled, 30 dBm and an EPC-only inventory mode. The manual documents the demo GUI only and gives no wire bytes.
+
 ## Open items
 
 - 0x80 single inventory payload bytes `00 64`: first byte is likely an antenna or mode selector, 100 is likely a duration. Untested on hardware
+- The Android SDK socket layer measures silence from the last inbound byte. After 5 seconds it sends the heartbeat, get-version when idle and the bare byte `00` during inventory, and repeats it about every 3 seconds while the silence lasts. It drops the link after 20 seconds of silence. Its connect timeout is 5000 ms, its read timeout 500 ms, and it sends stop inventory 100 ms after a successful connect
+- The DLL has no keepalive on TCP or serial. Its only heartbeat is the USB poll `A5 5A 00 08 EB E3 0D 0A` while no inventory runs, so the 5 and 20 second maintenance intervals do not come from the vendor DLL. The DLL's stop routine resends the stop frame every 100 ms for up to 1000 ms until the 0x8D reply arrives
 - Whether the reader enforces the heartbeat or keepalive intervals, or whether they are purely client-side library behavior
 - Whether a 0x83 frame can carry more than one record. Both pure-Java SDKs parse exactly one record per frame, and the 0xE0 batch exists for the multi-record case
 - Error payload values beyond `01`, `01 00` and the documented `01` and `22` tag error flags, no SDK decodes them
@@ -413,11 +506,11 @@ Set with 0xA1 sub 05.
 - Whether the volume set response is a bare `01` or echoes the subcommand, the only parser and the family convention disagree
 - Whether the flash storage commands 0xE9 and 0xEB apply to the UR4
 - Which header the reader answers with, `A5 5A` or `C8 8C`
-- The 4096 versus 2048 length window: the Java SDKs cap at 2048, the native library at 4096
+- The 4096 versus 2048 length window: the Java SDKs and the Android native receiver cap at 2048, the Linux and Windows native library at 4096
 - The phase reporting record layout with TID or USER blocks present, inferred from the documented EPC-only shape
 - The `27 10` start inventory payload seen in a third-party client
-- Whether the UR4 reader firmware forwards the module-level commands 0x04, 0x16, 0x26, 0x68, 0x8E and 0x9F, which appear in no Java SDK
-- Whether 0x74 factory-resets or soft-resets the UR4
+- Whether the UR4 reader firmware forwards the module-level commands 0x04, 0x16, 0x26, 0x68, 0x8E and 0x9F, which appear in no Java SDK and only in the native Linux library
+- Whether 0x74 factory-resets or soft-resets the UR4. The native libraries name 0x74 `UHFSetDefaultMode` and 0x68 `UHFSetSoftReset`, so a factory reset is the likely reading
 - The block permalock mask bytes on the permalock form
 - RS-485 variants, if the specific unit has one: half-duplex direction control is outside the protocol
 
@@ -429,3 +522,4 @@ The decompiled trees live in a temporary workspace:
 - Java jar: readable names, `i.java` and `j.java` hold the frame and command logic, `h.java` and `d.java` the record and hardcoded frames
 - `api_doc.txt` inside the Windows demo: converted DLL reference with command semantics and units, `UHFAPI.h` in the same archive holds the C signatures
 - C# demo with the full P/Invoke surface in `UHFAPI.cs`
+- Android native libraries `libDeviceAPIM.so` and `libDeviceAPIQ.so` inside the AAR, arm64-v8a build, disassembled with radare2. The 47 `UHF*_SendData` builders emit the frames listed in this document with the `A5 5A` header, none uses `C8 8C` and none adds an opcode this library lacks. Both libraries produce identical frames. The receiver `Um7_BT_RecvData` is a nine-state machine that hunts `A5` then `5A`, reads a 16-bit length, rejects lengths below 8 or above 2048 and resets, XORs every byte from the length through the payload, compares that to the checksum byte, then requires `0D` and `0A`. It never accepts `C8 8C`. The libraries name opcode 0x26 get CW, which agrees with the V2.0.8 opcode map
