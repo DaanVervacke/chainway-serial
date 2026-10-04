@@ -15,10 +15,16 @@ Before 1.0, breaking changes ship as minor bumps.
 ### Documentation
 
 - Correct the changelog grouping and the probe scope claim
+- Add the native library command catalog to the protocol reference
+
+### Features
+
+- Add the native library commands and the remaining reader commands
 
 ### Maintenance
 
 - Enforce docstrings on the public api
+- Align the changelog tooling with the library family
 
 ## [0.1.0] - 2026-10-02
 
