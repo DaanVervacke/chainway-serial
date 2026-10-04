@@ -27,6 +27,7 @@ categories:
       labels: [documentation]
   - title: Dependency updates
     semver-increment: patch
+    collapse-after: 5
     when:
       labels: [dependencies]
   - type: version-resolver

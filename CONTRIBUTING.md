@@ -34,7 +34,7 @@ Add all of the following:
 
 ## Changelog
 
-`CHANGELOG.md` is generated with git-cliff from conventional commit subjects. Never edit it by hand. `feat:` and `fix:` subjects become the Features and Bug Fixes entries, `docs:` and `chore:` subjects land in the Documentation and Maintenance sections, and every other type is left out. Regenerate with `git-cliff --output CHANGELOG.md` after committing.
+`CHANGELOG.md` is generated with git-cliff from conventional commit subjects. Never edit it by hand. `feat:` and `fix:` subjects become the Features and Bug Fixes entries, `docs:` and `chore:` subjects land in the Documentation and Maintenance sections, and every other type is left out. Regenerate with `git-cliff --output CHANGELOG.md` after committing. At release, rename the Unreleased heading to `## [X.Y.Z] - YYYY-MM-DD` and add the `[X.Y.Z]:` compare link at the bottom of the file, bump the version, commit, and tag `vX.Y.Z`. The next regeneration then renders the `[Unreleased]:` link from the new tag.
 
 ## Captures and confidential data
 
