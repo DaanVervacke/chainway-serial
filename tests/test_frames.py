@@ -19,6 +19,14 @@ def test_start_inventory_frame_matches_the_protocol_reference() -> None:
     assert build_frame(0x82, b"\x00\x00") == bytes.fromhex("A55A000A820000880D0A")
 
 
+def test_start_inventory_frequency_frame_matches_the_protocol_reference() -> None:
+    assert build_frame(0x82, b"\xff\xfe") == bytes.fromhex("A55A000A82FFFE890D0A")
+
+
+def test_start_inventory_phase_and_frequency_frame_matches_the_protocol_reference() -> None:
+    assert build_frame(0x82, b"\xff\xfd") == bytes.fromhex("A55A000A82FFFD8A0D0A")
+
+
 def test_stop_inventory_frame_matches_the_protocol_reference() -> None:
     assert build_frame(0x8C) == bytes.fromhex("A55A00088C840D0A")
 
@@ -97,6 +105,11 @@ def test_authenticate_tag_frame_matches_the_protocol_reference() -> None:
     assert build_frame(0x8E, payload) == bytes.fromhex(
         "A55A001D8E0000000001000000000B0000010203040506070809980D0A"
     )
+
+
+def test_set_protected_mode_frame_matches_the_protocol_reference() -> None:
+    payload = bytes.fromhex("000000000100200010E2800100")
+    assert build_frame(0x90, payload) == bytes.fromhex("A55A001590000000000100200010E2800100D70D0A")
 
 
 def test_block_permalock_frame_matches_the_protocol_reference() -> None:

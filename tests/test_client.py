@@ -434,6 +434,20 @@ async def test_authenticate_tag_rejects_a_bad_key_id(client: ChainwayClient) -> 
         await client.authenticate_tag(bytes(10), key_id=256)
 
 
+async def test_set_protected_mode_sends_the_documented_payload(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    await client.set_protected_mode(protected=True, short_range=False, tag_filter=qt_filter())
+    assert received(logic, Command.SET_PROTECTED_MODE) == bytes.fromhex(
+        "000000000100200010E2800100"
+    )
+    await client.set_protected_mode(protected=False, short_range=True)
+    assert received(logic, Command.SET_PROTECTED_MODE) == (
+        b"\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x01"
+    )
+
+
 async def test_read_block_permalock_sends_the_documented_payload(
     client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
 ) -> None:
@@ -857,6 +871,40 @@ async def test_inventory_phase_mode_reports_the_phase(
     assert tags[0].phase == 59
     starts = [payload for command, payload in logic.received if command == Command.START_INVENTORY]
     assert starts[-1] == b"\xff\xff"
+
+
+async def test_inventory_frequency_mode_reports_the_frequency(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    record = b"\x30\x00" + bytes(range(1, 13)) + bytes.fromhex("0DF4C8") + b"\xfd\x6f\x01"
+    logic.tags_to_stream = [record]
+    tags = []
+    async with aclosing(client.inventory(frequency=True)) as stream:
+        async for tag in stream:
+            tags.append(tag)
+            break
+    assert tags[0].phase is None
+    assert tags[0].frequency_khz == 914632
+    starts = [payload for command, payload in logic.received if command == Command.START_INVENTORY]
+    assert starts[-1] == b"\xff\xfe"
+
+
+async def test_inventory_phase_and_frequency_mode_reports_both(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    record = b"\x30\x00" + bytes(range(1, 13)) + bytes.fromhex("2A8C0DF4C8") + b"\xfd\x6f\x01"
+    logic.tags_to_stream = [record]
+    tags = []
+    async with aclosing(client.inventory(phase=True, frequency=True)) as stream:
+        async for tag in stream:
+            tags.append(tag)
+            break
+    assert tags[0].phase == 0x2A8C
+    assert tags[0].frequency_khz == 914632
+    starts = [payload for command, payload in logic.received if command == Command.START_INVENTORY]
+    assert starts[-1] == b"\xff\xfd"
 
 
 async def test_malformed_tag_record_is_dropped_and_the_stream_survives(

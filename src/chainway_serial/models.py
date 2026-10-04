@@ -239,6 +239,7 @@ class Tag:
     antenna: int | None
     received_at: datetime
     phase: int | None = None
+    frequency_khz: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

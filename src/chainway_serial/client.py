@@ -36,7 +36,9 @@ from .const import (
     MODULE_WORK_TIME_BYTES,
     MODULE_WORK_TIME_MAX,
     SINGLE_INVENTORY_PAYLOAD,
+    START_INVENTORY_FREQUENCY_PAYLOAD,
     START_INVENTORY_PAYLOAD,
+    START_INVENTORY_PHASE_AND_FREQUENCY_PAYLOAD,
     START_INVENTORY_PHASE_PAYLOAD,
     STATUS_OK,
     TAG_SENSOR_VOLTAGE_FACTOR,
@@ -222,6 +224,7 @@ class ChainwayClient:
         self._pending: tuple[int, asyncio.Future[bytes]] | None = None
         self._inventory_active = False
         self._inventory_phase = False
+        self._inventory_frequency = False
         self._tag_queue: asyncio.Queue[Tag | _LinkClosed] | None = None
         self._maintenance_task: asyncio.Task[None] | None = None
         self._callback_tasks: set[asyncio.Task[None]] = set()
@@ -746,19 +749,24 @@ class ChainwayClient:
             return None
         return parse_tag_record(payload, with_antenna=True, received_at=now_utc())
 
-    async def start_inventory(self, *, phase: bool = False) -> None:
+    async def start_inventory(self, *, phase: bool = False, frequency: bool = False) -> None:
         """Start a continuous inventory.
 
         The reader sends no acknowledgement, this method waits the
         documented start delay and returns. A no-op when an inventory
-        is already running.
+        is already running. The two payload bytes select the
+        reporting mode: the SDKs send ``00 00`` for a normal scan,
+        and the 2025 Java SDK defines ``FF FF`` for phase reporting,
+        ``FF FE`` for frequency point reporting and ``FF FD`` for
+        both.
 
         Args:
-            phase: Report the tag phase in degrees in every sighting,
-                the official document's phase reporting mode. The
-                layout with TID or USER blocks enabled is inferred
-                from the documented shape, verify against live
-                traffic.
+            phase: Report the tag phase in every sighting. The unit
+                is unverified, the official protocol document reads
+                degrees and the 2025 Java SDK reads a raw 16-bit
+                integer.
+            frequency: Report the channel frequency in kHz in every
+                sighting.
         """
         await self._ensure_connected()
         async with self._lock:
@@ -769,9 +777,17 @@ class ChainwayClient:
                 msg = "the link is closed"
                 raise ChainwayConnectionError(msg)
             self._tag_queue = asyncio.Queue()
-            payload = START_INVENTORY_PHASE_PAYLOAD if phase else START_INVENTORY_PAYLOAD
+            if phase and frequency:
+                payload = START_INVENTORY_PHASE_AND_FREQUENCY_PAYLOAD
+            elif phase:
+                payload = START_INVENTORY_PHASE_PAYLOAD
+            elif frequency:
+                payload = START_INVENTORY_FREQUENCY_PAYLOAD
+            else:
+                payload = START_INVENTORY_PAYLOAD
             transport.write(build_frame(Command.START_INVENTORY, payload))
             self._inventory_phase = phase
+            self._inventory_frequency = frequency
             self._inventory_active = True
             await asyncio.sleep(INVENTORY_START_DELAY)
 
@@ -801,7 +817,9 @@ class ChainwayClient:
             if queue is not None:
                 queue.put_nowait(_LinkClosed(None))
 
-    async def inventory(self, *, phase: bool = False) -> AsyncGenerator[Tag]:
+    async def inventory(
+        self, *, phase: bool = False, frequency: bool = False
+    ) -> AsyncGenerator[Tag]:
         """Yield tag sightings from a continuous inventory run.
 
         Starts the scan on first iteration and stops it on exit. Close
@@ -810,12 +828,14 @@ class ChainwayClient:
         is collected.
 
         Args:
-            phase: Report the tag phase in degrees in every sighting.
+            phase: Report the tag phase in every sighting.
+            frequency: Report the channel frequency in kHz in every
+                sighting.
 
         Raises:
             ChainwayConnectionError: The link dropped mid-scan.
         """
-        await self.start_inventory(phase=phase)
+        await self.start_inventory(phase=phase, frequency=frequency)
         queue = self._tag_queue
         if queue is None:
             msg = "the link was lost"
@@ -1048,6 +1068,35 @@ class ChainwayClient:
         _require_tag_success(response, Command.AUTHENTICATE_TAG)
         return parse_word_data(response, "authenticate")
 
+    async def set_protected_mode(
+        self,
+        *,
+        protected: bool,
+        short_range: bool,
+        access_password: bytes = b"\x00\x00\x00\x00",
+        tag_filter: TagFilter | None = None,
+    ) -> None:
+        """Set the protected mode and the short range mode of one tag.
+
+        The 2025 Java SDK is the only source and documents no mode
+        semantics.
+
+        Args:
+            protected: Turn the protected mode on or off.
+            short_range: Turn the short range mode on or off.
+            access_password: Four-byte tag access password.
+            tag_filter: Selection filter, or None to let the reader
+                pick the tag.
+
+        Raises:
+            ChainwayResponseError: The reader did not acknowledge the
+                command.
+        """
+        tail = bytes((int(protected), int(short_range)))
+        payload = build_tag_operation_payload(access_password, tag_filter, tail)
+        response = await self._request(Command.SET_PROTECTED_MODE, payload)
+        _require_ack(response, Command.SET_PROTECTED_MODE)
+
     async def read_block_permalock(
         self,
         bank: MemoryBank,
@@ -1150,6 +1199,11 @@ class ChainwayClient:
         tag_filter: TagFilter | None = None,
     ) -> None:
         """Set the Impinj Monza QT configuration of one tag.
+
+        The opcode comes from the 2024 native library. The 2025 Java
+        SDK uses the same opcode for a margin read with a different
+        payload, so which command the current firmware runs is
+        unverified.
 
         Args:
             qt_data: The one byte QT control value.
@@ -1820,6 +1874,7 @@ class ChainwayClient:
                 with_antenna=True,
                 received_at=now_utc(),
                 with_phase=self._inventory_phase,
+                with_frequency=self._inventory_frequency,
             )
         except ChainwayResponseError as err:
             _LOGGER.debug("dropping malformed tag record: %s", err)
@@ -1871,6 +1926,7 @@ class ChainwayClient:
     def _finish_inventory(self) -> None:
         self._inventory_active = False
         self._inventory_phase = False
+        self._inventory_frequency = False
 
     async def _teardown(self) -> None:
         current = asyncio.current_task()

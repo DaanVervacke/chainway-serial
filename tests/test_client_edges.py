@@ -257,7 +257,7 @@ async def test_external_stop_ends_a_waiting_iterator(
 async def test_inventory_raises_when_the_start_lost_the_link(
     client: ChainwayClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def lost_start(*, phase: bool = False) -> None:  # noqa: ARG001
+    async def lost_start(*, phase: bool = False, frequency: bool = False) -> None:  # noqa: ARG001
         return
 
     monkeypatch.setattr(client, "start_inventory", lost_start)

@@ -318,6 +318,69 @@ def test_parse_tag_record_phase_absent_without_the_mode() -> None:
     assert tag.antenna == 0xFE
 
 
+def test_parse_tag_record_frequency_mode_epc_only() -> None:
+    record = b"\x30\x00" + bytes(range(1, 13)) + bytes.fromhex("0DF4C8") + b"\xfd\x6f\x01"
+    tag = parse_tag_record(record, with_antenna=True, received_at=RECEIVED_AT, with_frequency=True)
+    assert tag.phase is None
+    assert tag.frequency_khz == 914632
+    assert tag.rssi == -65.7
+    assert tag.antenna == 1
+
+
+def test_parse_tag_record_phase_and_frequency_mode_epc_only() -> None:
+    record = b"\x30\x00" + bytes(range(1, 13)) + bytes.fromhex("2A8C0DF4C8") + b"\xfd\x6f\x01"
+    tag = parse_tag_record(
+        record,
+        with_antenna=True,
+        received_at=RECEIVED_AT,
+        with_phase=True,
+        with_frequency=True,
+    )
+    assert tag.phase == 0x2A8C
+    assert tag.frequency_khz == 914632
+    assert tag.rssi == -65.7
+    assert tag.antenna == 1
+
+
+def test_parse_tag_record_phase_and_frequency_without_antenna() -> None:
+    record = b"\x30\x00" + bytes(range(1, 13)) + bytes.fromhex("2A8C0DF4C8") + b"\xfd\x6f"
+    tag = parse_tag_record(
+        record,
+        with_antenna=False,
+        received_at=RECEIVED_AT,
+        with_phase=True,
+        with_frequency=True,
+    )
+    assert tag.phase == 0x2A8C
+    assert tag.frequency_khz == 914632
+    assert tag.rssi == -65.7
+    assert tag.antenna is None
+
+
+def test_parse_tag_record_phase_and_frequency_with_tid_and_user() -> None:
+    record = (
+        b"\x30\x00"
+        + bytes(range(1, 13))
+        + bytes(range(13, 25))
+        + b"\xaa\xbb"
+        + bytes.fromhex("2A8C0DF4C8")
+        + b"\xfd\x6f\x00"
+    )
+    tag = parse_tag_record(
+        record,
+        with_antenna=True,
+        received_at=RECEIVED_AT,
+        with_phase=True,
+        with_frequency=True,
+    )
+    assert tag.tid == bytes(range(13, 25))
+    assert tag.user_data == b"\xaa\xbb"
+    assert tag.phase == 0x2A8C
+    assert tag.frequency_khz == 914632
+    assert tag.rssi == -65.7
+    assert tag.antenna == 0
+
+
 def test_parse_flash_tags() -> None:
     payload = b"\x02\x06\x11\x22\x33\x44\x55\x66\x04\xaa\xbb\xcc\xdd"
     assert parse_flash_tags(payload) == (b"\x11\x22\x33\x44\x55\x66", b"\xaa\xbb\xcc\xdd")

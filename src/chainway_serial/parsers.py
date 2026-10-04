@@ -348,6 +348,7 @@ def parse_tag_record(
     with_antenna: bool,
     received_at: datetime,
     with_phase: bool = False,
+    with_frequency: bool = False,
 ) -> Tag:
     """Parse one tag record of a 0x83, 0x81 or batch response.
 
@@ -356,23 +357,28 @@ def parse_tag_record(
     trailing block, and more than three bytes after the TID mark
     the USER block as present, a margin the SDKs hardcode. Without a
     TID block the trailing block sits directly after the EPC. With
-    ``with_phase`` the trailing block starts with a 2-byte phase in
-    degrees, a layout the official protocol document defines for the
-    phase reporting inventory mode. The RSSI pair is a 16-bit
-    two's complement of dBm times ten, as the official protocol
-    document defines it, and values outside the SDK validity window
-    of 20 dBm span parse as None.
+    ``with_phase`` or ``with_frequency`` the trailing block starts
+    with the reported blocks in wire order, the 2-byte phase and the
+    3-byte frequency in kHz, followed by the RSSI pair and the
+    optional antenna byte. The phase unit is unverified, the official
+    protocol document reads degrees and the 2025 Java SDK reads a
+    raw 16-bit integer. The RSSI pair is a 16-bit two's complement
+    of dBm times ten, as the official protocol document defines it,
+    and values outside the SDK validity window of 20 dBm span parse
+    as None.
 
     Args:
         record: The raw record bytes: PC, then EPC, then the optional
-            TID and USER blocks, then the optional phase, the RSSI
-            pair and the optional antenna byte.
+            TID and USER blocks, then the optional reported blocks,
+            the RSSI pair and the optional antenna byte.
         with_antenna: Whether the record ends with one antenna byte
             after the RSSI pair. Inventory records carry it, collected
             tag records do not.
         received_at: Reception timestamp stored on the tag.
-        with_phase: Whether the record carries a 2-byte phase in
-            degrees between the body and the RSSI pair.
+        with_phase: Whether the record carries a 2-byte phase after
+            the body.
+        with_frequency: Whether the record carries a 3-byte frequency
+            in kHz after the phase block.
 
     Raises:
         ChainwayResponseError: The record is too short or carries no
@@ -384,9 +390,10 @@ def parse_tag_record(
         len(record) >= epc_length,
         f"tag record needs {epc_length} bytes of PC and EPC, got {len(record)}",
     )
-    phase_offset = PHASE_SIZE if with_phase else 0
-    trailing = 3 if with_antenna else 2
+    reporting_size = (PHASE_SIZE if with_phase else 0) + (FREQUENCY_BYTES if with_frequency else 0)
+    trailing = reporting_size + (3 if with_antenna else 2)
     phase: int | None = None
+    frequency_khz: int | None = None
     rssi_bytes: bytes | None = None
     antenna: int | None = None
     tid: bytes | None = None
@@ -395,18 +402,18 @@ def parse_tag_record(
         tid = record[epc_length : epc_length + TID_SIZE]
         tail_start = epc_length + TID_SIZE
         if len(record) - USER_BLOCK_MARGIN > epc_length + TID_SIZE:
-            tail_start = len(record) - trailing - phase_offset
+            tail_start = len(record) - trailing
             user_data = record[epc_length + TID_SIZE : tail_start]
     else:
         tail_start = epc_length
-    rssi_start = tail_start + phase_offset
-    if len(record) >= tail_start + PHASE_SIZE + 2:
+    rssi_start = tail_start + reporting_size
+    if len(record) >= rssi_start + 2:
+        offset = tail_start
         if with_phase:
-            phase = record[tail_start] << 8 | record[tail_start + 1]
-        rssi_bytes = record[rssi_start : rssi_start + 2]
-        if len(record) >= rssi_start + 3:
-            antenna = record[rssi_start + 2]
-    elif len(record) >= tail_start + phase_offset + 2:
+            phase = record[offset] << 8 | record[offset + 1]
+            offset += PHASE_SIZE
+        if with_frequency:
+            frequency_khz = int.from_bytes(record[offset : offset + FREQUENCY_BYTES])
         rssi_bytes = record[rssi_start : rssi_start + 2]
         if len(record) >= rssi_start + 3:
             antenna = record[rssi_start + 2]
@@ -422,6 +429,7 @@ def parse_tag_record(
         antenna=antenna,
         received_at=received_at,
         phase=phase,
+        frequency_khz=frequency_khz,
     )
 
 

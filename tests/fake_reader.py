@@ -151,6 +151,7 @@ class FakeReaderLogic:
             Command.BLOCK_PERMALOCK_TAG: self._respond_block_permalock,
             Command.LOCK_TAG: lambda _payload: self._tag_result(Command.LOCK_TAG),
             Command.KILL_TAG: lambda _payload: self._tag_result(Command.KILL_TAG),
+            Command.SET_PROTECTED_MODE: lambda _payload: b"\x01",
             Command.SET_QT: self._store_qt,
             Command.GET_QT: lambda _payload: b"\x01" + bytes((self.qt_data,)),
             Command.READ_QT: self._respond_read_qt,
