@@ -10,30 +10,47 @@ from .const import (
     ACCESS_PASSWORD_SIZE,
     ANTENNA_COUNT,
     BATCH_MIN_PAYLOAD,
+    BYTE_MAX,
+    DEACTIVATE_COMMAND_SIZE,
     DEVICE_ID_SIZE,
+    DWORD_MAX,
     FREQUENCY_BYTES,
     INVALID_RSSI_SPAN,
     MAX_ANTENNA,
+    MAX_POWER_DBM,
     MAX_WORD_ADDRESS,
     MAX_WORD_COUNT,
     MIN_ANTENNA,
+    MIN_POWER_DBM,
     MIN_TAG_RECORD_SIZE,
     MIN_WORD_ADDRESS,
+    MODULE_PARAM_DATA_SIZE,
+    MODULE_PARAM_ID_SIZE,
     PHASE_SIZE,
     POWER_RECORD_SIZE,
     READER_ADDRESS_LONG_SIZE,
     READER_ADDRESS_SIZE,
     RETURN_LOSS_RECORD_SIZE,
+    SENSOR_CALIBRATION_DATA_SIZE,
+    SENSOR_EPC_SIZE,
     STATUS_OK,
+    TAG_TEMP_RECORD_SIZE,
+    TEMP_CODE_MAX,
+    TEMP_CODE_RESOLUTION,
+    TEMP_CODE_SIGN_BIT,
+    TEMP_CODE_SPAN,
     TID_SIZE,
     USER_BLOCK_MARGIN,
     WORD_MODULUS,
     WORD_SIGN_BIT,
+    SensorSubcommand,
+    TagSensorSubcommand,
 )
 from .exceptions import ChainwayResponseError
 from .models import (
     AntennaPower,
     CollectedTags,
+    CollectedTagsFull,
     FirmwareVersion,
     Gen2Parameters,
     LockBank,
@@ -138,6 +155,66 @@ def parse_antenna_connection_state(payload: bytes) -> tuple[bool, ...]:
     require_exact_length(payload, 2, "antenna state")
     mask = payload[0] << 8 | payload[1]
     return tuple(mask & 1 << index != 0 for index in range(ANTENNA_COUNT))
+
+
+def parse_voltage(payload: bytes) -> int:
+    """Parse the signed raw value of a 0x09 response.
+
+    The response carries a status byte, a second byte no source
+    documents, and the signed value. No SDK documents the unit.
+
+    Raises:
+        ChainwayResponseError: The payload is truncated.
+    """
+    require_status_header(payload, 4, STATUS_OK, "voltage")
+    raw = payload[2] << 8 | payload[3]
+    if raw >= WORD_SIGN_BIT:
+        return raw - WORD_MODULUS
+    return raw
+
+
+def build_module_parameter_payload(param_type: int, param_id: int, data: bytes | None) -> bytes:
+    """Build the 0x18 or 0x1A payload.
+
+    The set form carries the type, the four byte ID and four data
+    bytes, the get form carries the type and the ID.
+
+    Raises:
+        ValueError: A field does not fit its wire size.
+    """
+    if not 0 <= param_type <= BYTE_MAX:
+        msg = f"parameter type must be between 0 and 255, got {param_type}"
+        raise ValueError(msg)
+    if not 0 <= param_id <= DWORD_MAX:
+        msg = f"parameter ID must be within 0 to {DWORD_MAX}, got {param_id}"
+        raise ValueError(msg)
+    payload = bytes((param_type,)) + param_id.to_bytes(MODULE_PARAM_ID_SIZE)
+    if data is None:
+        return payload
+    if len(data) != MODULE_PARAM_DATA_SIZE:
+        msg = f"parameter data must be {MODULE_PARAM_DATA_SIZE} bytes, got {len(data)}"
+        raise ValueError(msg)
+    return payload + data
+
+
+def parse_module_parameter(payload: bytes, param_id: int) -> bytes:
+    """Parse the 0x1B response into the four parameter data bytes.
+
+    The reply shape is inferred from the disassembly, no SDK decodes
+    it.
+
+    Raises:
+        ChainwayResponseError: The payload is truncated or echoes a
+            different parameter ID.
+    """
+    require_status_header(payload, 9, STATUS_OK, "module parameter")
+    echoed = int.from_bytes(payload[1 : 1 + MODULE_PARAM_ID_SIZE])
+    _require(
+        echoed == param_id,
+        f"module parameter response echoed ID {echoed:#010x}, requested {param_id:#010x}",
+    )
+    data_start = 1 + MODULE_PARAM_ID_SIZE
+    return payload[data_start : data_start + MODULE_PARAM_DATA_SIZE]
 
 
 def parse_power_records(payload: bytes) -> tuple[AntennaPower, ...]:
@@ -374,6 +451,40 @@ def parse_collected_tags(payload: bytes) -> CollectedTags:
     return CollectedTags(index=index, tags=tuple(tags))
 
 
+def parse_collected_tags_full(payload: bytes) -> CollectedTagsFull:
+    """Parse the full tag record batch of a 0xE3 response.
+
+    The batch carries one extra byte in front of the index pair that
+    no source documents, then the index, the record count and per
+    record one length byte and the full record bytes. A payload too
+    short for a record count carries only the index, the same invalid
+    marker form as the 0xE1 batch.
+
+    Raises:
+        ChainwayResponseError: The payload is shorter than the extra
+            byte and the index pair.
+    """
+    require_minimum_length(payload, 3, "collected")
+    index = payload[1] << 8 | payload[2]
+    if len(payload) < BATCH_MIN_PAYLOAD + 1:
+        return CollectedTagsFull(index=index, tags=())
+    count = payload[3]
+    tags: list[Tag] = []
+    offset = 4
+    for _ in range(count):
+        if offset >= len(payload):
+            break
+        length = payload[offset]
+        end = offset + 1 + length
+        if end > len(payload):
+            break
+        tags.append(
+            parse_tag_record(payload[offset + 1 : end], with_antenna=False, received_at=now_utc())
+        )
+        offset = end
+    return CollectedTagsFull(index=index, tags=tuple(tags))
+
+
 def parse_flash_tags(payload: bytes) -> tuple[bytes, ...]:
     """Parse the flash storage payload of a 0xEC response.
 
@@ -504,6 +615,22 @@ def build_reader_address_payload(subcommand: int, address: ReaderAddress) -> byt
     )
 
 
+def _filter_bytes(tag_filter: TagFilter) -> bytes:
+    data_length = math.ceil(tag_filter.bit_length / 8)
+    return (
+        bytes(
+            (
+                tag_filter.bank,
+                tag_filter.bit_address >> 8 & 0xFF,
+                tag_filter.bit_address & 0xFF,
+                tag_filter.bit_length >> 8 & 0xFF,
+                tag_filter.bit_length & 0xFF,
+            )
+        )
+        + tag_filter.data[:data_length]
+    )
+
+
 def build_tag_operation_payload(
     password: bytes,
     tag_filter: TagFilter | None,
@@ -524,21 +651,137 @@ def build_tag_operation_payload(
         raise ValueError(msg)
     if tag_filter is None:
         return password + b"\x01\x00\x00\x00\x00" + tail
-    data_length = math.ceil(tag_filter.bit_length / 8)
-    return (
-        password
-        + bytes(
-            (
-                tag_filter.bank,
-                tag_filter.bit_address >> 8 & 0xFF,
-                tag_filter.bit_address & 0xFF,
-                tag_filter.bit_length >> 8 & 0xFF,
-                tag_filter.bit_length & 0xFF,
-            )
+    return password + _filter_bytes(tag_filter) + tail
+
+
+def build_deactivate_payload(
+    command: bytes,
+    password: bytes,
+    tag_filter: TagFilter | None,
+) -> bytes:
+    """Build the 0xB0 payload.
+
+    The layout puts two command bytes in front of the password and the
+    filter. No source documents the command bytes, the vendor frame
+    sends two zero bytes.
+
+    Raises:
+        ValueError: The command is not two bytes or the password is
+            not four bytes.
+    """
+    if len(command) != DEACTIVATE_COMMAND_SIZE:
+        msg = f"command must be {DEACTIVATE_COMMAND_SIZE} bytes, got {len(command)}"
+        raise ValueError(msg)
+    if len(password) != ACCESS_PASSWORD_SIZE:
+        msg = f"password must be {ACCESS_PASSWORD_SIZE} bytes, got {len(password)}"
+        raise ValueError(msg)
+    if tag_filter is None:
+        return command + password + b"\x01\x00\x00\x00\x00"
+    return command + password + _filter_bytes(tag_filter)
+
+
+def build_sensor_payload(
+    sub: SensorSubcommand,
+    epc: bytes,
+    antenna: int,
+    power_dbm: float,
+    data: bytes = b"",
+) -> bytes:
+    """Build the 0x7C payload.
+
+    The request carries the subcommand, the EPC zero padded to 16
+    bytes, the antenna number and the power in centi-dBm. The write
+    calibration form appends eight data bytes.
+
+    Raises:
+        ValueError: The EPC is too long, the antenna or the power is
+            out of range, or the data length does not match the
+            subcommand.
+    """
+    if len(epc) > SENSOR_EPC_SIZE:
+        msg = f"EPC must be at most {SENSOR_EPC_SIZE} bytes, got {len(epc)}"
+        raise ValueError(msg)
+    if not MIN_ANTENNA <= antenna <= MAX_ANTENNA:
+        msg = f"antenna must be between {MIN_ANTENNA} and {MAX_ANTENNA}, got {antenna}"
+        raise ValueError(msg)
+    if not MIN_POWER_DBM <= power_dbm <= MAX_POWER_DBM:
+        msg = f"power must be between {MIN_POWER_DBM} and {MAX_POWER_DBM} dBm, got {power_dbm}"
+        raise ValueError(msg)
+    expected = SENSOR_CALIBRATION_DATA_SIZE if sub == SensorSubcommand.WRITE_CALIBRATION else 0
+    if len(data) != expected:
+        msg = (
+            f"calibration data must be {expected} bytes for subcommand {sub:#04x}, got {len(data)}"
         )
-        + tag_filter.data[:data_length]
-        + tail
+        raise ValueError(msg)
+    return (
+        bytes((sub,))
+        + epc.ljust(SENSOR_EPC_SIZE, b"\x00")
+        + bytes((antenna,))
+        + round(power_dbm * 100).to_bytes(2)
+        + data
     )
+
+
+def build_tag_sensor_payload(
+    sub: TagSensorSubcommand,
+    tag_filter: TagFilter,
+    extra: bytes,
+) -> bytes:
+    """Build the 0xA3 payload.
+
+    Every subcommand carries the mask filter, the caller appends the
+    subcommand specific fields.
+    """
+    return bytes((sub,)) + _filter_bytes(tag_filter) + extra
+
+
+def parse_tag_sensor_value(payload: bytes, sub: TagSensorSubcommand, name: str) -> int:
+    """Parse the subcommand echo and the 16-bit value of a 0xA4 response.
+
+    Raises:
+        ChainwayResponseError: The payload is truncated or echoes a
+            different subcommand.
+    """
+    require_minimum_length(payload, 3, name)
+    _require(
+        payload[0] == sub,
+        f"{name} response must echo subcommand {sub:#04x}, got {payload[0]:#04x}",
+    )
+    return payload[1] << 8 | payload[2]
+
+
+def parse_tag_temperatures(payload: bytes) -> tuple[float, ...]:
+    """Parse the 0xA4 multi temperature response in degrees C.
+
+    The payload echoes the subcommand, carries the total tag count and
+    the returned count, then one four byte record per returned tag.
+    The first two record bytes are a little-endian 10-bit code in
+    quarter degrees.
+
+    Raises:
+        ChainwayResponseError: The payload is truncated or echoes a
+            different subcommand.
+    """
+    require_minimum_length(payload, 4, "tag temperatures")
+    _require(
+        payload[0] == TagSensorSubcommand.READ_MULTI_TEMP,
+        f"tag temperatures response must echo subcommand"
+        f" {TagSensorSubcommand.READ_MULTI_TEMP:#04x}, got {payload[0]:#04x}",
+    )
+    returned = payload[3]
+    needed = 4 + returned * TAG_TEMP_RECORD_SIZE
+    _require(
+        len(payload) >= needed,
+        f"tag temperatures response promised {returned} records, got {len(payload) - 4} bytes",
+    )
+    temperatures = []
+    for index in range(returned):
+        offset = 4 + index * TAG_TEMP_RECORD_SIZE
+        code = (payload[offset] | payload[offset + 1] << 8) & TEMP_CODE_MAX
+        if code >= TEMP_CODE_SIGN_BIT:
+            code -= TEMP_CODE_SPAN
+        temperatures.append(code * TEMP_CODE_RESOLUTION)
+    return tuple(temperatures)
 
 
 def build_filter_payload(tag_filter: TagFilter | None, *, save: bool) -> bytes:

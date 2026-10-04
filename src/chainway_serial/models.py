@@ -118,6 +118,20 @@ class LinkFrequency(IntEnum):
     FREQ_640_KHZ = 0x07
 
 
+class BootloaderTarget(IntEnum):
+    """Firmware target of the bootloader jump, the payload byte of command 0xC0.
+
+    The values are the selector bytes of the vendor SDKs. Every SDK
+    jumps to the UHF module, the other targets come from the native
+    libraries and the C# demo.
+    """
+
+    UHF_MODULE = 0xCC
+    MAINBOARD = 0xEE
+    READER_BOOTLOADER = 0xBB
+    EX10 = 0xAA
+
+
 class LockMode(IntEnum):
     """Lock action applied to every selected memory bank."""
 
@@ -295,6 +309,18 @@ class CollectedTags:
 
     index: int
     tags: tuple[bytes, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CollectedTagsFull:
+    """Full tag records pulled from the reader storage with command 0xE2.
+
+    The records carry the PC word and the RSSI pair, without the
+    antenna byte of a live sighting.
+    """
+
+    index: int
+    tags: tuple[Tag, ...]
 
 
 @dataclass(frozen=True, slots=True)

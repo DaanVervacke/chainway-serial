@@ -68,6 +68,10 @@ def test_collected_tags_frame_matches_the_protocol_reference() -> None:
     assert build_frame(0xE0) == bytes.fromhex("A55A0008E0E80D0A")
 
 
+def test_collected_tags_full_frame_matches_the_protocol_reference() -> None:
+    assert build_frame(0xE2, b"\x01") == bytes.fromhex("A55A0009E201EA0D0A")
+
+
 def test_get_device_id_frame_matches_the_protocol_reference() -> None:
     assert build_frame(0x04) == bytes.fromhex("A55A0008040C0D0A")
 
@@ -100,6 +104,132 @@ def test_block_permalock_frame_matches_the_protocol_reference() -> None:
     assert build_frame(0x9F, payload) == bytes.fromhex(
         "A55A00239F000000000200000060E2003414013301001038D2B5000300000001620D0A"
     )
+
+
+def test_buzzer_off_frame_matches_the_protocol_reference() -> None:
+    assert build_frame(0xE4, b"\x03\x00") == bytes.fromhex("A55A000AE40300ED0D0A")
+
+
+def test_verify_voltage_frame_matches_the_protocol_reference() -> None:
+    assert build_frame(0x08, b"\x01") == bytes.fromhex("A55A00090801000D0A")
+
+
+def test_set_module_parameter_frame_matches_the_protocol_reference() -> None:
+    payload = bytes.fromhex("010000000100000002")
+    assert build_frame(0x18, payload) == bytes.fromhex("A55A0011180100000001000000020B0D0A")
+
+
+def test_get_module_parameter_frame_matches_the_protocol_reference() -> None:
+    assert build_frame(0x1A, bytes.fromhex("0100000001")) == bytes.fromhex(
+        "A55A000D1A0100000001170D0A"
+    )
+
+
+def test_set_temperature_protect_frame_matches_the_protocol_reference() -> None:
+    assert build_frame(0x38, b"\x01") == bytes.fromhex("A55A00093801300D0A")
+
+
+def test_get_temperature_protect_frame_matches_the_protocol_reference() -> None:
+    assert build_frame(0x3A) == bytes.fromhex("A55A00083A320D0A")
+
+
+def test_set_work_time_frame_matches_the_protocol_reference() -> None:
+    assert build_frame(0x3C, bytes.fromhex("00000001F4")) == bytes.fromhex(
+        "A55A000D3C00000001F4C40D0A"
+    )
+
+
+def test_get_work_time_frame_matches_the_protocol_reference() -> None:
+    assert build_frame(0x3E) == bytes.fromhex("A55A00083E360D0A")
+
+
+def test_set_dual_single_mode_frame_matches_the_protocol_reference() -> None:
+    assert build_frame(0x6A, b"\x01\x01") == bytes.fromhex("A55A000A6A0101600D0A")
+
+
+def test_get_dual_single_mode_frame_matches_the_protocol_reference() -> None:
+    assert build_frame(0x6C) == bytes.fromhex("A55A00086C640D0A")
+
+
+def test_sensor_calibration_frame_matches_the_protocol_reference() -> None:
+    payload = bytes.fromhex("03E2801160600002056B3A5A1E00000000010BB8")
+    assert build_frame(0x7C, payload) == bytes.fromhex(
+        "A55A001C7C03E2801160600002056B3A5A1E00000000010BB8B00D0A"
+    )
+
+
+def test_set_qt_frame_matches_the_protocol_reference() -> None:
+    payload = bytes.fromhex("000000000100200010E28001")
+    assert build_frame(0x97, payload) == bytes.fromhex("A55A001497000000000100200010E28001D10D0A")
+
+
+def test_get_qt_frame_matches_the_protocol_reference() -> None:
+    assert build_frame(0x99, bytes.fromhex("000000000100200010E280")) == bytes.fromhex(
+        "A55A001399000000000100200010E280D90D0A"
+    )
+
+
+def test_read_qt_frame_matches_the_protocol_reference() -> None:
+    payload = bytes.fromhex("000000000100200010E280010300000002")
+    assert build_frame(0x9B, payload) == bytes.fromhex(
+        "A55A00199B000000000100200010E280010300000002D10D0A"
+    )
+
+
+def test_write_qt_frame_matches_the_protocol_reference() -> None:
+    payload = bytes.fromhex("000000000100200010E2800103000000011234")
+    assert build_frame(0x9D, payload) == bytes.fromhex(
+        "A55A001B9D000000000100200010E2800103000000011234F00D0A"
+    )
+
+
+def test_deactivate_frame_matches_the_protocol_reference() -> None:
+    payload = bytes.fromhex("0000000000000100200010E280")
+    assert build_frame(0xB0, payload) == bytes.fromhex("A55A0015B00000000000000100200010E280F60D0A")
+
+
+def test_dwell_frame_matches_the_protocol_reference() -> None:
+    assert build_frame(0xB2, bytes.fromhex("000003E800000003")) == bytes.fromhex(
+        "A55A0010B2000003E8000000034A0D0A"
+    )
+
+
+def test_start_tag_logging_frame_matches_the_protocol_reference() -> None:
+    payload = bytes.fromhex("030100200010E2800050007A0000000A")
+    assert build_frame(0xA3, payload) == bytes.fromhex(
+        "A55A0018A3030100200010E2800050007A0000000ACB0D0A"
+    )
+
+
+def test_stop_tag_logging_frame_matches_the_protocol_reference() -> None:
+    assert build_frame(0xA3, bytes.fromhex("040100200010E280")) == bytes.fromhex(
+        "A55A0010A3040100200010E280E40D0A"
+    )
+
+
+def test_check_tag_sensor_mode_frame_matches_the_protocol_reference() -> None:
+    assert build_frame(0xA3, bytes.fromhex("050100200010E280")) == bytes.fromhex(
+        "A55A0010A3050100200010E280E50D0A"
+    )
+
+
+def test_read_tag_voltage_frame_matches_the_protocol_reference() -> None:
+    assert build_frame(0xA3, bytes.fromhex("060100200010E280")) == bytes.fromhex(
+        "A55A0010A3060100200010E280E60D0A"
+    )
+
+
+def test_read_tag_temperatures_frame_matches_the_protocol_reference() -> None:
+    assert build_frame(0xA3, bytes.fromhex("070100200010E280000004")) == bytes.fromhex(
+        "A55A0013A3070100200010E280000004E00D0A"
+    )
+
+
+def test_bootloader_jump_frames_match_the_protocol_reference() -> None:
+    assert build_frame(0xC0, b"\xcc") == bytes.fromhex("A55A0009C0CC050D0A")
+    assert build_frame(0xC0, b"\xee") == bytes.fromhex("A55A0009C0EE270D0A")
+    assert build_frame(0xC0, b"\xbb") == bytes.fromhex("A55A0009C0BB720D0A")
+    assert build_frame(0xC0, b"\xaa") == bytes.fromhex("A55A0009C0AA630D0A")
 
 
 def test_roundtrip() -> None:

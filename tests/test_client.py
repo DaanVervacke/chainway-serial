@@ -7,6 +7,7 @@ from contextlib import aclosing
 import pytest
 
 from chainway_serial import (
+    BootloaderTarget,
     ChainwayClient,
     ChainwayConnectionError,
     ChainwayInventoryActiveError,
@@ -27,7 +28,7 @@ from chainway_serial import (
     TriggerInput,
     WorkMode,
 )
-from chainway_serial.const import Command
+from chainway_serial.const import Command, SensorSubcommand
 from chainway_serial.frames import build_frame
 from chainway_serial.models import AntennaPower, Gen2Parameters, ReaderAddress
 
@@ -49,6 +50,10 @@ def commands_seen(logic: FakeReaderLogic) -> list[int]:
 
 def stream_tag_record() -> bytes:
     return b"\x30\x00" + bytes(range(1, 13)) + b"\xfe\xd6\x00"
+
+
+def qt_filter() -> TagFilter:
+    return TagFilter(bank=MemoryBank.EPC, bit_address=0x20, bit_length=16, data=b"\xe2\x80")
 
 
 async def test_get_version(
@@ -83,6 +88,82 @@ async def test_get_antenna_connection_state(client: ChainwayClient) -> None:
 
 async def test_get_battery_level(client: ChainwayClient) -> None:
     assert await client.get_battery_level() == 100
+
+
+async def test_verify_voltage(client: ChainwayClient) -> None:
+    assert await client.verify_voltage() == 3000
+
+
+async def test_module_parameter_roundtrip(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    await client.set_module_parameter(1, 0x01020304, b"\xaa\xbb\xcc\xdd")
+    assert received(logic, Command.SET_PARAM) == bytes.fromhex("0101020304aabbccdd")
+    assert await client.get_module_parameter(1, 0x01020304) == b"\xaa\xbb\xcc\xdd"
+    assert received(logic, Command.GET_PARAM) == bytes.fromhex("0101020304")
+
+
+async def test_module_parameter_rejects_a_foreign_echo(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    logic._responders[Command.GET_PARAM] = lambda _payload: bytes.fromhex("010000000055667788")
+    with pytest.raises(ChainwayResponseError, match="echoed"):
+        await client.get_module_parameter(1, 5)
+
+
+async def test_set_module_parameter_rejects_a_bad_field(client: ChainwayClient) -> None:
+    with pytest.raises(ValueError, match="parameter type"):
+        await client.set_module_parameter(256, 0, b"\x00" * 4)
+    with pytest.raises(ValueError, match="parameter ID"):
+        await client.set_module_parameter(0, 1 << 32, b"\x00" * 4)
+    with pytest.raises(ValueError, match="parameter data"):
+        await client.set_module_parameter(0, 0, b"\x00")
+
+
+async def test_temperature_protect_roundtrip(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    await client.set_temperature_protect(1)
+    assert received(logic, Command.SET_TEMPERATURE_PROTECT) == b"\x01"
+    assert await client.get_temperature_protect() == 1
+
+
+async def test_set_temperature_protect_rejects_a_bad_value(client: ChainwayClient) -> None:
+    with pytest.raises(ValueError, match="temperature protect"):
+        await client.set_temperature_protect(256)
+
+
+async def test_module_work_time_roundtrip(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    await client.set_module_work_time(500)
+    assert received(logic, Command.SET_MODULE_WORK_TIME) == bytes.fromhex("00000001F4")
+    assert await client.get_module_work_time() == 500
+
+
+async def test_set_module_work_time_rejects_a_bad_value(client: ChainwayClient) -> None:
+    with pytest.raises(ValueError, match="work time"):
+        await client.set_module_work_time(1 << 40)
+
+
+async def test_dual_single_mode_roundtrip(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    await client.set_dual_single_mode(1)
+    assert received(logic, Command.SET_DUAL_SINGLE_MODE) == b"\x01\x01"
+    await client.set_dual_single_mode(0, save=False)
+    assert received(logic, Command.SET_DUAL_SINGLE_MODE) == b"\x00\x00"
+    assert await client.get_dual_single_mode() == 0
+
+
+async def test_set_dual_single_mode_rejects_a_bad_mode(client: ChainwayClient) -> None:
+    with pytest.raises(ValueError, match="mode"):
+        await client.set_dual_single_mode(256)
 
 
 async def test_set_rf_power_sends_the_documented_payload(
@@ -406,6 +487,149 @@ async def test_block_permalock_rejects_a_bad_mask(client: ChainwayClient) -> Non
         await client.set_block_permalock(MemoryBank.USER, 0, 1, 0x10000)
 
 
+async def test_qt_roundtrip(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    await client.set_qt(0x01, tag_filter=qt_filter())
+    assert received(logic, Command.SET_QT) == bytes.fromhex("000000000100200010E28001")
+    assert await client.get_qt(tag_filter=qt_filter()) == 0x01
+    assert received(logic, Command.GET_QT) == bytes.fromhex("000000000100200010E280")
+
+
+async def test_qt_read_and_write_send_the_documented_payload(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    data = await client.read_qt(0x01, MemoryBank.USER, 0, 2, tag_filter=qt_filter())
+    assert data == b"\x11\x22\x33\x44"
+    assert received(logic, Command.READ_QT) == bytes.fromhex("000000000100200010E280010300000002")
+    await client.write_qt(0x01, MemoryBank.USER, 0, b"\x12\x34", tag_filter=qt_filter())
+    assert received(logic, Command.WRITE_QT) == bytes.fromhex(
+        "000000000100200010E2800103000000011234"
+    )
+
+
+async def test_qt_rejects_bad_values(client: ChainwayClient) -> None:
+    with pytest.raises(ValueError, match="QT"):
+        await client.set_qt(256)
+    with pytest.raises(ValueError, match="QT"):
+        await client.read_qt(256, MemoryBank.USER, 0, 2)
+    with pytest.raises(ValueError, match="QT"):
+        await client.write_qt(256, MemoryBank.USER, 0, b"\x12\x34")
+    with pytest.raises(ValueError, match="even number"):
+        await client.write_qt(0x01, MemoryBank.USER, 0, b"\x12")
+
+
+async def test_read_qt_failure_raises(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    logic.failing_tag_commands = {Command.READ_QT}
+    with pytest.raises(ChainwayResponseError, match="error code 1"):
+        await client.read_qt(0x01, MemoryBank.USER, 0, 2)
+
+
+async def test_deactivate_tag_sends_the_documented_payload(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    await client.deactivate_tag(tag_filter=qt_filter())
+    assert received(logic, Command.DEACTIVATE_TAG) == bytes.fromhex("0000000000000100200010E280")
+
+
+async def test_deactivate_tag_rejects_a_bad_command(client: ChainwayClient) -> None:
+    with pytest.raises(ValueError, match="command"):
+        await client.deactivate_tag(b"\x00")
+
+
+async def test_set_dwell_time_sends_the_documented_payload(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    await client.set_dwell_time(1000, 3)
+    assert received(logic, Command.SET_DWELL_TIME) == bytes.fromhex("000003E800000003")
+
+
+async def test_set_dwell_time_rejects_a_bad_value(client: ChainwayClient) -> None:
+    with pytest.raises(ValueError, match="dwell"):
+        await client.set_dwell_time(-1, 3)
+    with pytest.raises(ValueError, match="count"):
+        await client.set_dwell_time(3, 1 << 32)
+
+
+async def test_read_tag_sensor_sends_the_documented_payload(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    epc = bytes.fromhex("E2801160600002056B3A5A1E")
+    data = await client.read_tag_sensor(SensorSubcommand.ON_CHIP_RSSI, epc, 1, 30.0)
+    assert data == b"\x11\x22\x33\x44"
+    assert received(logic, Command.SENSOR_CALIBRATION) == (
+        b"\x03" + epc + b"\x00\x00\x00\x00" + b"\x01\x0b\xb8"
+    )
+
+
+async def test_read_tag_sensor_rejects_the_write_subcommand(client: ChainwayClient) -> None:
+    with pytest.raises(ValueError, match="write calibration"):
+        await client.read_tag_sensor(SensorSubcommand.WRITE_CALIBRATION, b"\x01", 1, 30.0)
+
+
+async def test_write_tag_calibration_sends_the_documented_payload(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    epc = bytes.fromhex("E2801160600002056B3A5A1E")
+    await client.write_tag_calibration(epc, 1, 30.0, bytes(8))
+    assert received(logic, Command.SENSOR_CALIBRATION) == (
+        b"\x06" + epc + b"\x00\x00\x00\x00" + b"\x01\x0b\xb8" + bytes(8)
+    )
+
+
+async def test_tag_sensor_logging(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    await client.start_tag_logging(qt_filter(), 0x50, 0x7A, 0, 0x0A)
+    assert received(logic, Command.TAG_SENSOR) == (
+        b"\x03\x01\x00\x20\x00\x10\xe2\x80\x00\x50\x00\x7a\x00\x00\x00\x0a"
+    )
+    await client.stop_tag_logging(qt_filter())
+    assert received(logic, Command.TAG_SENSOR) == b"\x04\x01\x00\x20\x00\x10\xe2\x80"
+
+
+async def test_tag_sensor_reads(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    assert await client.check_tag_sensor_mode(qt_filter()) == 1
+    assert received(logic, Command.TAG_SENSOR) == b"\x05\x01\x00\x20\x00\x10\xe2\x80"
+    assert await client.read_tag_sensor_voltage(qt_filter()) == 2.5
+    assert received(logic, Command.TAG_SENSOR) == b"\x06\x01\x00\x20\x00\x10\xe2\x80"
+    assert await client.read_tag_temperatures(qt_filter(), 0, 2) == (20.0, 30.5)
+    assert received(logic, Command.TAG_SENSOR) == b"\x07\x01\x00\x20\x00\x10\xe2\x80\x00\x00\x02"
+
+
+async def test_tag_sensor_rejects_bad_values(client: ChainwayClient) -> None:
+    with pytest.raises(ValueError, match="temperature codes"):
+        await client.start_tag_logging(qt_filter(), 0x400, 0x7A, 0, 0x0A)
+    with pytest.raises(ValueError, match="delay and interval"):
+        await client.start_tag_logging(qt_filter(), 0x50, 0x7A, -1, 0x0A)
+    with pytest.raises(ValueError, match="start"):
+        await client.read_tag_temperatures(qt_filter(), 0x10000, 1)
+    with pytest.raises(ValueError, match="count"):
+        await client.read_tag_temperatures(qt_filter(), 0, 0)
+
+
+async def test_tag_sensor_failure_raises(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    logic.failing_tag_commands = {Command.TAG_SENSOR}
+    with pytest.raises(ChainwayResponseError, match="error code 1"):
+        await client.start_tag_logging(qt_filter(), 0x50, 0x7A, 0, 0x0A)
+
+
 async def test_failing_tag_operation_raises(
     client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
 ) -> None:
@@ -428,6 +652,15 @@ async def test_collected_tags(client: ChainwayClient) -> None:
     collected = await client.read_collected_tags()
     assert collected.index == 5
     assert collected.tags == (b"\x11\x22\x33\x44\x55\x66", b"\xaa\xbb\xcc\xdd")
+
+
+async def test_collected_tags_full(client: ChainwayClient) -> None:
+    collected = await client.read_collected_tags_full()
+    assert collected.index == 5
+    assert len(collected.tags) == 2
+    assert collected.tags[0].epc == bytes(range(1, 13))
+    assert collected.tags[0].rssi == -29.8
+    assert collected.tags[0].antenna is None
 
 
 async def test_collected_tag_counts_and_delete(client: ChainwayClient) -> None:
@@ -521,6 +754,14 @@ async def test_beep(client: ChainwayClient, reader_server: tuple[FakeReaderLogic
     assert received(logic, Command.PERIPHERAL) == b"\x03\x01\x02"
 
 
+async def test_stop_buzzer(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    await client.stop_buzzer()
+    assert received(logic, Command.PERIPHERAL) == b"\x03\x00"
+
+
 async def test_led(client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]) -> None:
     logic, _ = reader_server
     await client.set_led(enabled=True)
@@ -541,6 +782,18 @@ async def test_firmware_update_flow(
     assert received(logic, Command.UPDATE_BLOCK) == b"\x01\x02\x03" + b"\x00" * 61
     await client.stop_update()
     assert received(logic, Command.STOP_UPDATE) == b""
+
+
+async def test_jump_to_bootloader_targets(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    await client.jump_to_bootloader(BootloaderTarget.MAINBOARD)
+    assert received(logic, Command.JUMP_TO_BOOTLOADER) == b"\xee"
+    await client.jump_to_bootloader(BootloaderTarget.READER_BOOTLOADER)
+    assert received(logic, Command.JUMP_TO_BOOTLOADER) == b"\xbb"
+    await client.jump_to_bootloader(BootloaderTarget.EX10)
+    assert received(logic, Command.JUMP_TO_BOOTLOADER) == b"\xaa"
 
 
 async def test_inventory_streams_tags_and_stops(

@@ -4,9 +4,11 @@ from datetime import UTC, datetime
 
 import pytest
 
+from chainway_serial.const import SensorSubcommand, TagSensorSubcommand
 from chainway_serial.exceptions import ChainwayResponseError
 from chainway_serial.models import (
     CollectedTags,
+    CollectedTagsFull,
     Gen2Parameters,
     InventoryMode,
     InventoryModeConfig,
@@ -18,23 +20,32 @@ from chainway_serial.models import (
     TagFilter,
 )
 from chainway_serial.parsers import (
+    build_deactivate_payload,
     build_filter_payload,
     build_lock_code,
+    build_module_parameter_payload,
     build_power_payload,
     build_reader_address_payload,
+    build_sensor_payload,
     build_tag_operation_payload,
+    build_tag_sensor_payload,
     pack_gen2_parameters,
     parse_antenna_connection_state,
     parse_collected_tags,
+    parse_collected_tags_full,
     parse_device_id,
     parse_fixed_frequency,
     parse_flash_tags,
+    parse_module_parameter,
     parse_power_records,
     parse_reader_address,
     parse_return_loss,
     parse_tag_record,
+    parse_tag_sensor_value,
+    parse_tag_temperatures,
     parse_temperature,
     parse_version,
+    parse_voltage,
     parse_word_data,
     unpack_gen2_parameters,
     validate_block_window,
@@ -496,3 +507,199 @@ def test_validate_block_window() -> None:
         validate_block_window(-1, 1)
     with pytest.raises(ValueError, match="block range"):
         validate_block_window(0, 0)
+
+
+def qt_filter() -> TagFilter:
+    return TagFilter(bank=MemoryBank.EPC, bit_address=0x20, bit_length=16, data=b"\xe2\x80")
+
+
+def test_parse_voltage_positive() -> None:
+    assert parse_voltage(b"\x01\x01\x0b\xb8") == 3000
+
+
+def test_parse_voltage_negative() -> None:
+    assert parse_voltage(b"\x01\x01\xff\x38") == -200
+
+
+def test_parse_voltage_rejects_a_short_payload() -> None:
+    with pytest.raises(ChainwayResponseError, match="voltage"):
+        parse_voltage(b"\x01\x01\x0b")
+
+
+def test_build_module_parameter_payload_set_form() -> None:
+    payload = build_module_parameter_payload(0x01, 0x01020304, b"\x00\x00\x00\x02")
+    assert payload == bytes.fromhex("010102030400000002")
+
+
+def test_build_module_parameter_payload_get_form() -> None:
+    assert build_module_parameter_payload(0x01, 0x01020304, None) == bytes.fromhex("0101020304")
+
+
+def test_build_module_parameter_payload_rejects_a_bad_type() -> None:
+    with pytest.raises(ValueError, match="parameter type"):
+        build_module_parameter_payload(256, 0, b"\x00" * 4)
+
+
+def test_build_module_parameter_payload_rejects_a_bad_id() -> None:
+    with pytest.raises(ValueError, match="parameter ID"):
+        build_module_parameter_payload(0, 1 << 32, b"\x00" * 4)
+
+
+def test_build_module_parameter_payload_rejects_bad_data() -> None:
+    with pytest.raises(ValueError, match="parameter data"):
+        build_module_parameter_payload(0, 0, b"\x00")
+
+
+def test_parse_module_parameter() -> None:
+    payload = bytes.fromhex("0101020304aabbccdd")
+    assert parse_module_parameter(payload, 0x01020304) == b"\xaa\xbb\xcc\xdd"
+
+
+def test_parse_module_parameter_rejects_a_foreign_echo() -> None:
+    with pytest.raises(ChainwayResponseError, match="echoed"):
+        parse_module_parameter(bytes.fromhex("010000000055667788"), 0x01020304)
+
+
+def test_parse_module_parameter_rejects_a_short_payload() -> None:
+    with pytest.raises(ChainwayResponseError, match="module parameter"):
+        parse_module_parameter(b"\x01\x01", 0x01020304)
+
+
+def test_build_deactivate_payload_with_filter() -> None:
+    payload = build_deactivate_payload(b"\x00\x00", b"\x00\x00\x00\x00", qt_filter())
+    assert payload == bytes.fromhex("0000000000000100200010E280")
+
+
+def test_build_deactivate_payload_without_filter() -> None:
+    payload = build_deactivate_payload(b"\x00\x00", b"\x12\x34\x56\x78", None)
+    assert payload == bytes.fromhex("0000123456780100000000")
+
+
+def test_build_deactivate_payload_rejects_a_bad_command() -> None:
+    with pytest.raises(ValueError, match="command"):
+        build_deactivate_payload(b"\x00", b"\x00\x00\x00\x00", None)
+
+
+def test_build_deactivate_payload_rejects_a_bad_password() -> None:
+    with pytest.raises(ValueError, match="password"):
+        build_deactivate_payload(b"\x00\x00", b"\x00", None)
+
+
+def test_build_sensor_payload_pads_the_epc() -> None:
+    epc = bytes.fromhex("E2801160600002056B3A5A1E")
+    payload = build_sensor_payload(SensorSubcommand.ON_CHIP_RSSI, epc, 1, 30.0)
+    assert payload == b"\x03" + epc + b"\x00\x00\x00\x00" + b"\x01\x0b\xb8"
+
+
+def test_build_sensor_payload_write_calibration() -> None:
+    payload = build_sensor_payload(SensorSubcommand.WRITE_CALIBRATION, b"\x01", 1, 30.0, bytes(8))
+    assert payload == b"\x06\x01" + b"\x00" * 15 + b"\x01\x0b\xb8" + bytes(8)
+
+
+def test_build_sensor_payload_rejects_a_long_epc() -> None:
+    with pytest.raises(ValueError, match="EPC"):
+        build_sensor_payload(SensorSubcommand.SENSOR_CODE, bytes(17), 1, 30.0)
+
+
+def test_build_sensor_payload_rejects_a_bad_antenna() -> None:
+    with pytest.raises(ValueError, match="antenna"):
+        build_sensor_payload(SensorSubcommand.SENSOR_CODE, b"", 0, 30.0)
+
+
+def test_build_sensor_payload_rejects_a_bad_power() -> None:
+    with pytest.raises(ValueError, match="power"):
+        build_sensor_payload(SensorSubcommand.SENSOR_CODE, b"", 1, 40.0)
+
+
+def test_build_sensor_payload_rejects_a_wrong_data_length() -> None:
+    with pytest.raises(ValueError, match="calibration data"):
+        build_sensor_payload(SensorSubcommand.WRITE_CALIBRATION, b"", 1, 30.0, b"\x00")
+    with pytest.raises(ValueError, match="calibration data"):
+        build_sensor_payload(SensorSubcommand.SENSOR_CODE, b"", 1, 30.0, b"\x00")
+
+
+def test_build_tag_sensor_payload_start_logging() -> None:
+    extra = bytes.fromhex("0050007A0000000A")
+    payload = build_tag_sensor_payload(TagSensorSubcommand.START_LOGGING, qt_filter(), extra)
+    assert payload == bytes.fromhex("030100200010E2800050007A0000000A")
+
+
+def test_build_tag_sensor_payload_stop_logging() -> None:
+    payload = build_tag_sensor_payload(TagSensorSubcommand.STOP_LOGGING, qt_filter(), b"")
+    assert payload == bytes.fromhex("040100200010E280")
+
+
+def test_parse_tag_sensor_value() -> None:
+    value = parse_tag_sensor_value(b"\x05\x00\x01", TagSensorSubcommand.CHECK_OP_MODE, "mode")
+    assert value == 1
+
+
+def test_parse_tag_sensor_value_rejects_a_foreign_echo() -> None:
+    with pytest.raises(ChainwayResponseError, match="echo"):
+        parse_tag_sensor_value(b"\x06\x00\x01", TagSensorSubcommand.CHECK_OP_MODE, "mode")
+
+
+def test_parse_tag_sensor_value_rejects_a_short_payload() -> None:
+    with pytest.raises(ChainwayResponseError, match="at least 3 bytes"):
+        parse_tag_sensor_value(b"\x05\x00", TagSensorSubcommand.CHECK_OP_MODE, "mode")
+
+
+def test_parse_tag_temperatures() -> None:
+    assert parse_tag_temperatures(bytes.fromhex("07000202500000007A000000")) == (20.0, 30.5)
+
+
+def test_parse_tag_temperatures_decodes_negative_codes() -> None:
+    payload = bytes.fromhex("07000202D7030000FC030000")
+    assert parse_tag_temperatures(payload) == (-10.25, -1.0)
+
+
+def test_parse_tag_temperatures_rejects_truncated_records() -> None:
+    with pytest.raises(ChainwayResponseError, match="promised"):
+        parse_tag_temperatures(bytes.fromhex("07000202D7030000"))
+
+
+def test_parse_tag_temperatures_rejects_a_foreign_echo() -> None:
+    with pytest.raises(ChainwayResponseError, match="echo"):
+        parse_tag_temperatures(bytes.fromhex("05000200"))
+
+
+def test_parse_tag_temperatures_rejects_a_short_payload() -> None:
+    with pytest.raises(ChainwayResponseError, match="at least 4 bytes"):
+        parse_tag_temperatures(b"\x07\x00\x02")
+
+
+def test_parse_collected_tags_full() -> None:
+    record = b"\x30\x00" + bytes(range(1, 13)) + b"\xfe\xd6"
+    payload = b"\x00\x00\x05\x02\x10" + record + b"\x10" + record
+    collected = parse_collected_tags_full(payload)
+    assert isinstance(collected, CollectedTagsFull)
+    assert collected.index == 5
+    assert len(collected.tags) == 2
+    assert collected.tags[0].epc == bytes(range(1, 13))
+    assert collected.tags[0].rssi == -29.8
+    assert collected.tags[0].antenna is None
+
+
+def test_parse_collected_tags_full_invalid_marker() -> None:
+    collected = parse_collected_tags_full(b"\x00\x00\x07")
+    assert collected.index == 7
+    assert collected.tags == ()
+
+
+def test_parse_collected_tags_full_stops_at_a_truncated_record() -> None:
+    record = b"\x30\x00" + bytes(range(1, 13)) + b"\xfe\xd6"
+    payload = b"\x00\x00\x05\x02\x10" + record + b"\x10\x11\x22"
+    collected = parse_collected_tags_full(payload)
+    assert len(collected.tags) == 1
+
+
+def test_parse_collected_tags_full_stops_when_the_count_overruns() -> None:
+    record = b"\x30\x00" + bytes(range(1, 13)) + b"\xfe\xd6"
+    payload = b"\x00\x00\x05\x02\x10" + record
+    collected = parse_collected_tags_full(payload)
+    assert len(collected.tags) == 1
+
+
+def test_parse_collected_tags_full_rejects_a_short_payload() -> None:
+    with pytest.raises(ChainwayResponseError, match="at least 3 bytes"):
+        parse_collected_tags_full(b"\x00\x05")

@@ -17,12 +17,13 @@ from .const import (
     AUTH_CHALLENGE_SIZE,
     AUTH_KEY_AND_DATA_SIZE,
     BARCODE_NO_READ_PAYLOAD,
-    BOOTLOADER_JUMP_PAYLOAD,
     BYTE_MAX,
+    COLLECTED_TAGS_FULL_PAYLOAD,
     DEFAULT_BAUDRATE,
     DEFAULT_DEAD_LINK_TIMEOUT,
     DEFAULT_KEEPALIVE_INTERVAL,
     DEFAULT_RESPONSE_TIMEOUT,
+    DWORD_MAX,
     FREQUENCY_BYTES,
     INVENTORY_KEEPALIVE_BYTE,
     INVENTORY_START_DELAY,
@@ -32,12 +33,17 @@ from .const import (
     MAX_POWER_DBM,
     MIN_ANTENNA,
     MIN_POWER_DBM,
+    MODULE_WORK_TIME_BYTES,
+    MODULE_WORK_TIME_MAX,
     SINGLE_INVENTORY_PAYLOAD,
     START_INVENTORY_PAYLOAD,
     START_INVENTORY_PHASE_PAYLOAD,
     STATUS_OK,
+    TAG_SENSOR_VOLTAGE_FACTOR,
     TAG_SUCCESS,
+    TEMP_CODE_MAX,
     UPDATE_BLOCK_SIZE,
+    VERIFY_VOLTAGE_PAYLOAD,
     WORD_MAX,
     Command,
     ConfigSubcommand,
@@ -45,6 +51,8 @@ from .const import (
     FlashSubcommand,
     PeripheralSubcommand,
     ProtocolTypeSelector,
+    SensorSubcommand,
+    TagSensorSubcommand,
 )
 from .exceptions import (
     ChainwayConnectionError,
@@ -57,7 +65,9 @@ from .frames import build_frame
 from .models import (
     AntennaPower,
     AntennaState,
+    BootloaderTarget,
     CollectedTags,
+    CollectedTagsFull,
     FirmwareVersion,
     Gen2Parameters,
     GpoState,
@@ -80,24 +90,33 @@ from .models import (
 )
 from .parsers import (
     banks_tuple,
+    build_deactivate_payload,
     build_filter_payload,
     build_lock_code,
+    build_module_parameter_payload,
     build_power_payload,
     build_reader_address_payload,
+    build_sensor_payload,
     build_tag_operation_payload,
+    build_tag_sensor_payload,
     now_utc,
     pack_gen2_parameters,
     parse_antenna_connection_state,
     parse_collected_tags,
+    parse_collected_tags_full,
     parse_device_id,
     parse_fixed_frequency,
     parse_flash_tags,
+    parse_module_parameter,
     parse_power_records,
     parse_reader_address,
     parse_return_loss,
     parse_tag_record,
+    parse_tag_sensor_value,
+    parse_tag_temperatures,
     parse_temperature,
     parse_version,
+    parse_voltage,
     parse_word_data,
     require_minimum_length,
     require_status_header,
@@ -312,6 +331,112 @@ class ChainwayClient:
         """Return the battery charge percentage."""
         payload = await self._request(Command.PERIPHERAL, bytes((PeripheralSubcommand.BATTERY,)))
         require_status_header(payload, 2, PeripheralSubcommand.BATTERY, "battery")
+        return payload[1]
+
+    async def verify_voltage(self) -> int:
+        """Return the module supply voltage reading as a raw signed value.
+
+        The native library names the command voltage verification. No
+        SDK documents the unit of the value.
+        """
+        payload = await self._request(Command.VERIFY_VOLTAGE, VERIFY_VOLTAGE_PAYLOAD)
+        return parse_voltage(payload)
+
+    async def set_module_parameter(self, param_type: int, param_id: int, data: bytes) -> None:
+        """Write one module parameter.
+
+        Args:
+            param_type: The one byte parameter type.
+            param_id: The four byte parameter ID.
+            data: Exactly four bytes of parameter data.
+
+        Raises:
+            ValueError: A field does not fit its wire size.
+            ChainwayResponseError: The reader did not acknowledge the
+                write.
+        """
+        payload = build_module_parameter_payload(param_type, param_id, data)
+        response = await self._request(Command.SET_PARAM, payload)
+        _require_ack(response, Command.SET_PARAM)
+
+    async def get_module_parameter(self, param_type: int, param_id: int) -> bytes:
+        """Read one module parameter and return its four data bytes.
+
+        Only the Linux native library builds the command and no SDK
+        decodes the reply, so the reply shape follows the disassembly.
+
+        Raises:
+            ValueError: A field does not fit its wire size.
+            ChainwayResponseError: The reply is truncated or echoes a
+                different parameter ID.
+        """
+        payload = build_module_parameter_payload(param_type, param_id, None)
+        response = await self._request(Command.GET_PARAM, payload)
+        return parse_module_parameter(response, param_id)
+
+    async def set_temperature_protect(self, value: int) -> None:
+        """Set the module temperature protection value.
+
+        The payload is one byte, the sources disagree whether it
+        carries a flag or a temperature value.
+
+        Raises:
+            ValueError: The value does not fit one byte.
+        """
+        if not 0 <= value <= BYTE_MAX:
+            msg = f"temperature protect value must be between 0 and 255, got {value}"
+            raise ValueError(msg)
+        response = await self._request(Command.SET_TEMPERATURE_PROTECT, bytes((value,)))
+        _require_ack(response, Command.SET_TEMPERATURE_PROTECT)
+
+    async def get_temperature_protect(self) -> int:
+        """Return the module temperature protection value."""
+        payload = await self._request(Command.GET_TEMPERATURE_PROTECT)
+        require_status_header(payload, 2, STATUS_OK, "temperature protect")
+        return payload[1]
+
+    async def set_module_work_time(self, value: int) -> None:
+        """Set the module work time.
+
+        The request carries the value in five bytes, the response of
+        the get form returns four, and no source documents the unit.
+
+        Raises:
+            ValueError: The value does not fit five bytes.
+        """
+        if not 0 <= value <= MODULE_WORK_TIME_MAX:
+            msg = f"work time must be within 0 to {MODULE_WORK_TIME_MAX}, got {value}"
+            raise ValueError(msg)
+        response = await self._request(
+            Command.SET_MODULE_WORK_TIME, value.to_bytes(MODULE_WORK_TIME_BYTES)
+        )
+        _require_ack(response, Command.SET_MODULE_WORK_TIME)
+
+    async def get_module_work_time(self) -> int:
+        """Return the module work time."""
+        payload = await self._request(Command.GET_MODULE_WORK_TIME)
+        require_status_header(payload, 5, STATUS_OK, "work time")
+        return int.from_bytes(payload[1:5])
+
+    async def set_dual_single_mode(self, mode: int, *, save: bool = True) -> None:
+        """Set the dual single mode of the module.
+
+        No source documents the mode values, so the raw byte passes
+        through.
+
+        Raises:
+            ValueError: The mode does not fit one byte.
+        """
+        if not 0 <= mode <= BYTE_MAX:
+            msg = f"mode must be between 0 and 255, got {mode}"
+            raise ValueError(msg)
+        response = await self._request(Command.SET_DUAL_SINGLE_MODE, bytes((int(save), mode)))
+        _require_ack(response, Command.SET_DUAL_SINGLE_MODE)
+
+    async def get_dual_single_mode(self) -> int:
+        """Return the dual single mode of the module."""
+        payload = await self._request(Command.GET_DUAL_SINGLE_MODE)
+        require_status_header(payload, 2, STATUS_OK, "dual single mode")
         return payload[1]
 
     async def set_reader_idle_sleep_time(self, value: int) -> None:
@@ -1017,10 +1142,368 @@ class ChainwayClient:
         response = await self._request(Command.BLOCK_PERMALOCK_TAG, payload)
         _require_tag_success(response, Command.BLOCK_PERMALOCK_TAG)
 
+    async def set_qt(
+        self,
+        qt_data: int,
+        *,
+        access_password: bytes = b"\x00\x00\x00\x00",
+        tag_filter: TagFilter | None = None,
+    ) -> None:
+        """Set the Impinj Monza QT configuration of one tag.
+
+        Args:
+            qt_data: The one byte QT control value.
+            access_password: Four-byte tag access password.
+            tag_filter: Selection filter, or None to let the reader
+                pick the tag.
+
+        Raises:
+            ValueError: The QT value does not fit one byte.
+            ChainwayResponseError: The reader did not acknowledge the
+                write.
+        """
+        if not 0 <= qt_data <= BYTE_MAX:
+            msg = f"QT value must be between 0 and 255, got {qt_data}"
+            raise ValueError(msg)
+        payload = build_tag_operation_payload(access_password, tag_filter, bytes((qt_data,)))
+        response = await self._request(Command.SET_QT, payload)
+        _require_ack(response, Command.SET_QT)
+
+    async def get_qt(
+        self,
+        *,
+        access_password: bytes = b"\x00\x00\x00\x00",
+        tag_filter: TagFilter | None = None,
+    ) -> int:
+        """Return the Impinj Monza QT configuration of one tag.
+
+        Raises:
+            ChainwayResponseError: The response is truncated.
+        """
+        payload = build_tag_operation_payload(access_password, tag_filter, b"")
+        response = await self._request(Command.GET_QT, payload)
+        require_status_header(response, 2, STATUS_OK, "QT")
+        return response[1]
+
+    async def read_qt(
+        self,
+        qt_data: int,
+        bank: MemoryBank,
+        word_address: int,
+        word_count: int,
+        *,
+        access_password: bytes = b"\x00\x00\x00\x00",
+        tag_filter: TagFilter | None = None,
+    ) -> bytes:
+        """Read from the QT memory of one tag.
+
+        The native wrappers run a single inventory before the read,
+        call :meth:`single_inventory` to reproduce that sequence.
+
+        Args:
+            qt_data: The one byte QT control value.
+            bank: The QT memory bank to read from.
+            word_address: Start address in 16-bit words.
+            word_count: Number of 16-bit words to read. The native
+                library truncates the count above 255 bytes.
+            access_password: Four-byte tag access password.
+            tag_filter: Selection filter, or None to let the reader
+                pick the tag.
+
+        Returns:
+            The read data, ``word_count`` times two bytes.
+
+        Raises:
+            ValueError: The QT value or the window is invalid.
+            ChainwayResponseError: The reader reported a failure.
+        """
+        if not 0 <= qt_data <= BYTE_MAX:
+            msg = f"QT value must be between 0 and 255, got {qt_data}"
+            raise ValueError(msg)
+        validate_word_window(word_address, word_count)
+        tail = bytes(
+            (
+                qt_data,
+                bank,
+                word_address >> 8 & 0xFF,
+                word_address & 0xFF,
+                word_count >> 8 & 0xFF,
+                word_count & 0xFF,
+            )
+        )
+        payload = build_tag_operation_payload(access_password, tag_filter, tail)
+        response = await self._request(Command.READ_QT, payload)
+        _require_tag_success(response, Command.READ_QT)
+        return parse_word_data(response, "QT read")
+
+    async def write_qt(
+        self,
+        qt_data: int,
+        bank: MemoryBank,
+        word_address: int,
+        data: bytes,
+        *,
+        access_password: bytes = b"\x00\x00\x00\x00",
+        tag_filter: TagFilter | None = None,
+    ) -> None:
+        """Write to the QT memory of one tag.
+
+        Raises:
+            ValueError: The QT value is invalid, the data length is
+                odd or the window is invalid.
+            ChainwayResponseError: The reader reported a failure.
+        """
+        if not 0 <= qt_data <= BYTE_MAX:
+            msg = f"QT value must be between 0 and 255, got {qt_data}"
+            raise ValueError(msg)
+        if not data or len(data) % 2 != 0:
+            msg = f"data must be a non-empty even number of bytes, got {len(data)}"
+            raise ValueError(msg)
+        validate_word_window(word_address, len(data) // 2)
+        word_count = len(data) // 2
+        tail = (
+            bytes(
+                (
+                    qt_data,
+                    bank,
+                    word_address >> 8 & 0xFF,
+                    word_address & 0xFF,
+                    word_count >> 8 & 0xFF,
+                    word_count & 0xFF,
+                )
+            )
+            + data
+        )
+        payload = build_tag_operation_payload(access_password, tag_filter, tail)
+        response = await self._request(Command.WRITE_QT, payload)
+        _require_tag_success(response, Command.WRITE_QT)
+
+    async def deactivate_tag(
+        self,
+        command: bytes = b"\x00\x00",
+        *,
+        access_password: bytes = b"\x00\x00\x00\x00",
+        tag_filter: TagFilter | None = None,
+    ) -> None:
+        """Send the native deactivate command to one tag.
+
+        The two command bytes lead the payload and no source documents
+        their meaning. The vendor frame sends two zero bytes.
+
+        Raises:
+            ValueError: The command is not two bytes.
+            ChainwayResponseError: The reader did not acknowledge the
+                command.
+        """
+        payload = build_deactivate_payload(command, access_password, tag_filter)
+        response = await self._request(Command.DEACTIVATE_TAG, payload)
+        _require_ack(response, Command.DEACTIVATE_TAG)
+
+    async def set_dwell_time(self, dwell: int, count: int) -> None:
+        """Set the dwell time of the module.
+
+        No source documents the units. The reference frame carries
+        the values 1000 and 3.
+
+        Raises:
+            ValueError: A value does not fit four bytes.
+        """
+        if not 0 <= dwell <= DWORD_MAX:
+            msg = f"dwell must be within 0 to {DWORD_MAX}, got {dwell}"
+            raise ValueError(msg)
+        if not 0 <= count <= DWORD_MAX:
+            msg = f"count must be within 0 to {DWORD_MAX}, got {count}"
+            raise ValueError(msg)
+        payload = dwell.to_bytes(4) + count.to_bytes(4)
+        response = await self._request(Command.SET_DWELL_TIME, payload)
+        _require_ack(response, Command.SET_DWELL_TIME)
+
+    async def read_tag_sensor(
+        self,
+        sub: SensorSubcommand,
+        epc: bytes,
+        antenna: int,
+        power_dbm: float,
+    ) -> bytes:
+        """Read one value from a sensor tag with the 0x7C command.
+
+        Args:
+            sub: The value to read, every subcommand except write
+                calibration.
+            epc: The tag EPC, zero padded to 16 bytes on the wire.
+            antenna: One-based antenna number.
+            power_dbm: Power in dBm applied to the read.
+
+        Returns:
+            The read data. The length depends on the subcommand, the
+            response carries a word count.
+
+        Raises:
+            ValueError: The subcommand is write calibration, or a
+                field is out of range.
+            ChainwayResponseError: The reader reported a failure.
+        """
+        if sub is SensorSubcommand.WRITE_CALIBRATION:
+            msg = "the write calibration subcommand belongs to write_tag_calibration"
+            raise ValueError(msg)
+        payload = build_sensor_payload(sub, epc, antenna, power_dbm)
+        response = await self._request(Command.SENSOR_CALIBRATION, payload)
+        _require_tag_success(response, Command.SENSOR_CALIBRATION)
+        return parse_word_data(response, "tag sensor")
+
+    async def write_tag_calibration(
+        self,
+        epc: bytes,
+        antenna: int,
+        power_dbm: float,
+        data: bytes,
+    ) -> None:
+        """Write the calibration block of a sensor tag.
+
+        Args:
+            epc: The tag EPC, zero padded to 16 bytes on the wire.
+            antenna: One-based antenna number.
+            power_dbm: Power in dBm applied to the write.
+            data: Exactly eight calibration bytes.
+
+        Raises:
+            ValueError: A field is out of range.
+            ChainwayResponseError: The reader reported a failure.
+        """
+        payload = build_sensor_payload(
+            SensorSubcommand.WRITE_CALIBRATION, epc, antenna, power_dbm, data
+        )
+        response = await self._request(Command.SENSOR_CALIBRATION, payload)
+        _require_tag_success(response, Command.SENSOR_CALIBRATION)
+
+    async def start_tag_logging(
+        self,
+        tag_filter: TagFilter,
+        min_code: int,
+        max_code: int,
+        delay: int,
+        interval: int,
+    ) -> None:
+        """Start temperature logging on one sensor tag.
+
+        The layout comes from the disassembly only. The boundary
+        values are 10-bit temperature codes, the same format
+        :meth:`read_tag_temperatures` decodes.
+
+        Args:
+            tag_filter: The mask filter that selects the sensor tag.
+            min_code: The lower temperature boundary, 0 to 1023.
+            max_code: The upper temperature boundary, 0 to 1023.
+            delay: The logging start delay, unit undocumented.
+            interval: The logging interval, unit undocumented.
+
+        Raises:
+            ValueError: A value is out of range.
+            ChainwayResponseError: The reader reported a failure.
+        """
+        if not 0 <= min_code <= TEMP_CODE_MAX or not 0 <= max_code <= TEMP_CODE_MAX:
+            msg = (
+                f"temperature codes must be within 0 to {TEMP_CODE_MAX},"
+                f" got {min_code} and {max_code}"
+            )
+            raise ValueError(msg)
+        if not 0 <= delay <= WORD_MAX or not 0 <= interval <= WORD_MAX:
+            msg = f"delay and interval must be within 0 to {WORD_MAX}, got {delay} and {interval}"
+            raise ValueError(msg)
+        extra = (
+            min_code.to_bytes(2) + max_code.to_bytes(2) + delay.to_bytes(2) + interval.to_bytes(2)
+        )
+        payload = build_tag_sensor_payload(TagSensorSubcommand.START_LOGGING, tag_filter, extra)
+        response = await self._request(Command.TAG_SENSOR, payload)
+        _require_tag_success(response, Command.TAG_SENSOR)
+
+    async def stop_tag_logging(self, tag_filter: TagFilter) -> None:
+        """Stop temperature logging on one sensor tag.
+
+        Raises:
+            ChainwayResponseError: The reader reported a failure.
+        """
+        payload = build_tag_sensor_payload(TagSensorSubcommand.STOP_LOGGING, tag_filter, b"")
+        response = await self._request(Command.TAG_SENSOR, payload)
+        _require_tag_success(response, Command.TAG_SENSOR)
+
+    async def check_tag_sensor_mode(self, tag_filter: TagFilter) -> int:
+        """Return the operating mode value of one sensor tag.
+
+        No source documents the value.
+
+        Raises:
+            ChainwayResponseError: The response is truncated or echoes
+                a different subcommand.
+        """
+        payload = build_tag_sensor_payload(TagSensorSubcommand.CHECK_OP_MODE, tag_filter, b"")
+        response = await self._request(Command.TAG_SENSOR, payload)
+        return parse_tag_sensor_value(
+            response, TagSensorSubcommand.CHECK_OP_MODE, "tag sensor mode"
+        )
+
+    async def read_tag_sensor_voltage(self, tag_filter: TagFilter) -> float:
+        """Return the voltage of one sensor tag in volts.
+
+        The value is the raw reading times 2.5 divided by 8192.
+
+        Raises:
+            ChainwayResponseError: The response is truncated or echoes
+                a different subcommand.
+        """
+        payload = build_tag_sensor_payload(TagSensorSubcommand.READ_VOLTAGE, tag_filter, b"")
+        response = await self._request(Command.TAG_SENSOR, payload)
+        raw = parse_tag_sensor_value(
+            response, TagSensorSubcommand.READ_VOLTAGE, "tag sensor voltage"
+        )
+        return raw * TAG_SENSOR_VOLTAGE_FACTOR
+
+    async def read_tag_temperatures(
+        self,
+        tag_filter: TagFilter,
+        start: int,
+        count: int,
+    ) -> tuple[float, ...]:
+        """Read the logged temperatures of one sensor tag.
+
+        Args:
+            tag_filter: The mask filter that selects the sensor tag.
+            start: The first temperature entry to read, 0 to 65535.
+            count: How many entries to read, 1 to 255.
+
+        Returns:
+            One temperature in degrees C per returned entry.
+
+        Raises:
+            ValueError: The window is out of range.
+            ChainwayResponseError: The response is truncated.
+        """
+        if not 0 <= start <= WORD_MAX:
+            msg = f"start must be within 0 to {WORD_MAX}, got {start}"
+            raise ValueError(msg)
+        if not 1 <= count <= BYTE_MAX:
+            msg = f"count must be between 1 and 255, got {count}"
+            raise ValueError(msg)
+        extra = start.to_bytes(2) + bytes((count,))
+        payload = build_tag_sensor_payload(TagSensorSubcommand.READ_MULTI_TEMP, tag_filter, extra)
+        response = await self._request(Command.TAG_SENSOR, payload)
+        return parse_tag_temperatures(response)
+
     async def read_collected_tags(self) -> CollectedTags:
         """Pull the tags collected in auto or trigger work mode."""
         payload = await self._request(Command.READ_COLLECTED_TAGS)
         return parse_collected_tags(payload)
+
+    async def read_collected_tags_full(self) -> CollectedTagsFull:
+        """Pull full tag records collected in auto or trigger work mode.
+
+        The records carry the PC word and the RSSI pair, without the
+        antenna byte of a live sighting. The request form is documented
+        as one byte with an unverified tail, this method sends the
+        single documented byte.
+        """
+        payload = await self._request(Command.READ_COLLECTED_TAGS_FULL, COLLECTED_TAGS_FULL_PAYLOAD)
+        return parse_collected_tags_full(payload)
 
     async def get_collected_tag_count(self) -> int:
         """Return how many collected tags the reader stores."""
@@ -1201,6 +1684,18 @@ class ChainwayClient:
         )
         _require_ack(response, Command.PERIPHERAL)
 
+    async def stop_buzzer(self) -> None:
+        """Turn the buzzer off.
+
+        The vendor demos ship this form as a hardcoded frame, the
+        buzzer off variant of the buzzer duration command.
+        """
+        response = await self._request(
+            Command.PERIPHERAL,
+            bytes((PeripheralSubcommand.BUZZER_DURATION, 0x00)),
+        )
+        _require_ack(response, Command.PERIPHERAL)
+
     async def set_led(self, *, enabled: bool) -> None:
         """Turn the LED on or off."""
         state = 0x01 if enabled else 0x00
@@ -1226,9 +1721,17 @@ class ChainwayClient:
         )
         _require_ack(response, Command.PERIPHERAL)
 
-    async def jump_to_bootloader(self) -> None:
-        """Reboot the module into the bootloader for a firmware update."""
-        response = await self._request(Command.JUMP_TO_BOOTLOADER, BOOTLOADER_JUMP_PAYLOAD)
+    async def jump_to_bootloader(
+        self, target: BootloaderTarget = BootloaderTarget.UHF_MODULE
+    ) -> None:
+        """Reboot one firmware target into its bootloader.
+
+        Args:
+            target: The firmware target to reboot. Every SDK jumps to
+                the UHF module, the other targets come from the native
+                libraries and the C# demo.
+        """
+        response = await self._request(Command.JUMP_TO_BOOTLOADER, bytes((target,)))
         _require_ack(response, Command.JUMP_TO_BOOTLOADER)
 
     async def start_update(self) -> None:

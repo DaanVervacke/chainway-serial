@@ -21,7 +21,9 @@ from .exceptions import (
 from .models import (
     AntennaPower,
     AntennaState,
+    BootloaderTarget,
     CollectedTags,
+    CollectedTagsFull,
     DiscoveredReader,
     FirmwareVersion,
     Gen2Parameters,
@@ -54,6 +56,7 @@ except _PackageNotFoundError:
 __all__ = [
     "AntennaPower",
     "AntennaState",
+    "BootloaderTarget",
     "ChainwayClient",
     "ChainwayConnectionError",
     "ChainwayError",
@@ -62,6 +65,7 @@ __all__ = [
     "ChainwayResponseError",
     "ChainwayTimeoutError",
     "CollectedTags",
+    "CollectedTagsFull",
     "ConnectionLostCallback",
     "DiscoveredReader",
     "FirmwareVersion",

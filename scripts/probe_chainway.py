@@ -1,12 +1,15 @@
 """Probe a live Chainway UR4 reader and dump every response to captures/."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import sys
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from pathlib import Path
 
-from chainway_serial import ChainwayClient, InventoryMode, discover_readers
+from chainway_serial import ChainwayClient, ChainwayError, InventoryMode, discover_readers
 from chainway_serial.models import Tag
 
 CAPTURES = Path("captures")
@@ -22,6 +25,16 @@ def serialize_tag(tag: Tag) -> dict[str, object]:
     }
 
 
+async def capture(
+    results: dict[str, object], name: str, call: Callable[[], Awaitable[object]]
+) -> None:
+    """Run one read and record the value, or the error when the reader rejects it."""
+    try:
+        results[name] = await call()
+    except ChainwayError as err:
+        results[name] = f"error: {err}"
+
+
 async def probe_reader(client: ChainwayClient) -> dict[str, object]:
     """Run every read command against the reader and collect the results."""
     results: dict[str, object] = {}
@@ -33,6 +46,11 @@ async def probe_reader(client: ChainwayClient) -> dict[str, object]:
     results["temperature"] = await client.get_temperature()
     results["antenna_state"] = (await client.get_antenna_connection_state()).connected
     results["battery"] = await client.get_battery_level()
+    await capture(results, "voltage", client.verify_voltage)
+    await capture(results, "temperature_protect", client.get_temperature_protect)
+    await capture(results, "module_work_time", client.get_module_work_time)
+    await capture(results, "dual_single_mode", client.get_dual_single_mode)
+    await capture(results, "module_parameter", lambda: client.get_module_parameter(1, 1))
     results["power"] = [
         {
             "antenna": power.antenna,
@@ -62,6 +80,12 @@ async def probe_reader(client: ChainwayClient) -> dict[str, object]:
     results["collected_count"] = await client.get_collected_tag_count()
     barcode = await client.scan_barcode()
     results["barcode"] = barcode.hex() if barcode else None
+
+    async def read_collected_full() -> dict[str, object]:
+        collected = await client.read_collected_tags_full()
+        return {"index": collected.index, "tags": [serialize_tag(tag) for tag in collected.tags]}
+
+    await capture(results, "collected_full", read_collected_full)
     return results
 
 

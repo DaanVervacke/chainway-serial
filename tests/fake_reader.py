@@ -14,6 +14,8 @@ from chainway_serial.const import (
     FlashSubcommand,
     PeripheralSubcommand,
     ProtocolTypeSelector,
+    SensorSubcommand,
+    TagSensorSubcommand,
 )
 from chainway_serial.exceptions import ChainwayProtocolError
 from chainway_serial.frames import build_frame, parse_frame
@@ -27,6 +29,20 @@ class FakeReaderLogic:
     def __init__(self) -> None:
         self.received: list[tuple[int, bytes]] = []
         self.raw: list[bytes] = []
+        self.silent_commands: set[int] = set()
+        self.drop_connection_commands: set[int] = set()
+        self.bad_checksum_commands: set[int] = set()
+        self.failing_tag_commands: set[int] = set()
+        self.junk_on_connect = b""
+        self.push: Callable[[bytes], None] | None = None
+        self.close_transport: Callable[[], None] | None = None
+        self._buffer = bytearray()
+        self._inventory_task: asyncio.Task[None] | None = None
+        self._init_state()
+        self._responders = self._build_responders()
+        self._config_responders = self._build_config_responders()
+
+    def _init_state(self) -> None:
         self.version_payload = b"\x01\x02\x03"
         self.temperature_payload = b"\x01\x10\x0e"
         self.power_payload = b"\x00\x01\x0b\xb8\x0b\xb8"
@@ -41,14 +57,21 @@ class FakeReaderLogic:
         self.idle_sleep_time = 0x0A
         self.single_inventory_payload = b"\x30\x00" + bytes(range(1, 13)) + b"\xfe\xd6\x00"
         self.read_tag_payload = b"\x01\x00\x00\x02\x11\x22\x33\x44"
+        self.read_qt_payload = b"\x01\x00\x00\x02\x11\x22\x33\x44"
+        self.sensor_payload = b"\x01\x00\x00\x02\x11\x22\x33\x44"
+        self.module_parameter_data = b"\x11\x22\x33\x44"
+        self.temperature_protect = 0x01
+        self.module_work_time = 500
+        self.dual_single_mode = 0x01
+        self.qt_data = 0x01
+        self.tag_sensor_mode_payload = b"\x05\x00\x01"
+        self.tag_sensor_voltage_payload = b"\x06\x20\x00"
+        self.tag_temperatures_payload = b"\x07\x00\x02\x02\x50\x00\x00\x00\x7a\x00\x00\x00"
+        full_record = b"\x30\x00" + bytes(range(1, 13)) + b"\xfe\xd6"
+        self.collected_full_payload = b"\x00\x00\x05\x02\x10" + full_record + b"\x10" + full_record
         self.barcode_payload = b"\x02\x02\x00"
         self.tags_to_stream: list[bytes] = []
         self.stream_delay = 0.01
-        self.silent_commands: set[int] = set()
-        self.drop_connection_commands: set[int] = set()
-        self.bad_checksum_commands: set[int] = set()
-        self.failing_tag_commands: set[int] = set()
-        self.junk_on_connect = b""
         self.protocol_type = 0x00
         self.region = 0x08
         self.rf_link = 0x02
@@ -64,11 +87,9 @@ class FakeReaderLogic:
         self.trigger_config = b"\x00\x00\x64\x00\x0a\x00"
         self.volume = 0x05
         self.antenna_work_time: dict[int, int] = {1: 100}
-        self.push: Callable[[bytes], None] | None = None
-        self.close_transport: Callable[[], None] | None = None
-        self._buffer = bytearray()
-        self._inventory_task: asyncio.Task[None] | None = None
-        self._responders: dict[int, Responder] = {
+
+    def _build_responders(self) -> dict[int, Responder]:
+        return {
             Command.GET_VERSION: lambda _payload: self.version_payload,
             Command.STM32_VERSION: lambda _payload: b"\x01\x00\x01",
             Command.HARDWARE_VERSION: lambda _payload: b"\x00\x01\x02",
@@ -103,6 +124,24 @@ class FakeReaderLogic:
             Command.GET_FAST_INVENTORY_MODE: lambda _payload: b"\x01\x01",
             Command.SOFTWARE_RESET: lambda _payload: b"\x01",
             Command.RESTORE_FACTORY_SETTINGS: lambda _payload: b"\x01",
+            Command.VERIFY_VOLTAGE: lambda _payload: b"\x01\x01\x0b\xb8",
+            Command.SET_PARAM: self._store_module_parameter,
+            Command.GET_PARAM: self._respond_module_parameter,
+            Command.SET_TEMPERATURE_PROTECT: self._store_temperature_protect,
+            Command.GET_TEMPERATURE_PROTECT: lambda _payload: (
+                b"\x01" + bytes((self.temperature_protect,))
+            ),
+            Command.SET_MODULE_WORK_TIME: self._store_module_work_time,
+            Command.GET_MODULE_WORK_TIME: lambda _payload: (
+                b"\x01" + self.module_work_time.to_bytes(4)
+            ),
+            Command.SET_DUAL_SINGLE_MODE: self._store_dual_single_mode,
+            Command.GET_DUAL_SINGLE_MODE: lambda _payload: (
+                b"\x01" + bytes((self.dual_single_mode,))
+            ),
+            Command.SENSOR_CALIBRATION: self._respond_sensor,
+            Command.TAG_SENSOR: self._respond_tag_sensor,
+            Command.SET_DWELL_TIME: lambda _payload: b"\x01",
             Command.SINGLE_INVENTORY: lambda _payload: self.single_inventory_payload,
             Command.READ_TAG: self._respond_read_tag,
             Command.AUTHENTICATE_TAG: self._respond_authenticate,
@@ -112,7 +151,13 @@ class FakeReaderLogic:
             Command.BLOCK_PERMALOCK_TAG: self._respond_block_permalock,
             Command.LOCK_TAG: lambda _payload: self._tag_result(Command.LOCK_TAG),
             Command.KILL_TAG: lambda _payload: self._tag_result(Command.KILL_TAG),
+            Command.SET_QT: self._store_qt,
+            Command.GET_QT: lambda _payload: b"\x01" + bytes((self.qt_data,)),
+            Command.READ_QT: self._respond_read_qt,
+            Command.WRITE_QT: lambda _payload: self._tag_result(Command.WRITE_QT),
+            Command.DEACTIVATE_TAG: lambda _payload: b"\x01",
             Command.READ_COLLECTED_TAGS: lambda _payload: self.collected_payload,
+            Command.READ_COLLECTED_TAGS_FULL: lambda _payload: self.collected_full_payload,
             Command.FLASH_STORAGE: self._respond_flash,
             Command.READ_FLASH_TAGS: lambda _payload: self.flash_payload,
             Command.JUMP_TO_BOOTLOADER: lambda _payload: b"\x01",
@@ -120,7 +165,9 @@ class FakeReaderLogic:
             Command.UPDATE_BLOCK: lambda _payload: b"\x01",
             Command.STOP_UPDATE: lambda _payload: b"\x01",
         }
-        self._config_responders: dict[int, Responder] = {
+
+    def _build_config_responders(self) -> dict[int, Responder]:
+        return {
             ConfigSubcommand.SET_READER_ADDRESS: self._store_reader_address,
             ConfigSubcommand.GET_READER_ADDRESS: lambda _payload: b"\x02" + self.reader_address,
             ConfigSubcommand.SET_DESTINATION_ADDRESS: self._store_destination_address,
@@ -233,6 +280,36 @@ class FakeReaderLogic:
             return b"\x01\x01"
         return self.read_tag_payload
 
+    def _respond_read_qt(self, _payload: bytes) -> bytes:
+        if Command.READ_QT in self.failing_tag_commands:
+            return b"\x01\x01"
+        return self.read_qt_payload
+
+    def _respond_module_parameter(self, payload: bytes) -> bytes:
+        return b"\x01" + payload[1:5] + self.module_parameter_data
+
+    def _store_module_parameter(self, payload: bytes) -> bytes:
+        self.module_parameter_data = payload[5:9]
+        return b"\x01"
+
+    def _respond_sensor(self, payload: bytes) -> bytes:
+        if Command.SENSOR_CALIBRATION in self.failing_tag_commands:
+            return b"\x01\x01"
+        if payload[0] == SensorSubcommand.WRITE_CALIBRATION:
+            return b"\x01\x00"
+        return self.sensor_payload
+
+    def _respond_tag_sensor(self, payload: bytes) -> bytes:
+        if Command.TAG_SENSOR in self.failing_tag_commands:
+            return b"\x01\x01"
+        if payload[0] == TagSensorSubcommand.CHECK_OP_MODE:
+            return self.tag_sensor_mode_payload
+        if payload[0] == TagSensorSubcommand.READ_VOLTAGE:
+            return self.tag_sensor_voltage_payload
+        if payload[0] == TagSensorSubcommand.READ_MULTI_TEMP:
+            return self.tag_temperatures_payload
+        return b"\x01\x00"
+
     def _respond_authenticate(self, _payload: bytes) -> bytes:
         if Command.AUTHENTICATE_TAG in self.failing_tag_commands:
             return b"\x01\x01"
@@ -268,6 +345,24 @@ class FakeReaderLogic:
 
     def _store_antenna_work_time(self, payload: bytes) -> bytes:
         self.antenna_work_time[payload[0] & 0x0F] = payload[1] << 8 | payload[2]
+        return b"\x01"
+
+    def _store_temperature_protect(self, payload: bytes) -> bytes:
+        self.temperature_protect = payload[0]
+        return b"\x01"
+
+    def _store_module_work_time(self, payload: bytes) -> bytes:
+        self.module_work_time = int.from_bytes(payload)
+        return b"\x01"
+
+    def _store_dual_single_mode(self, payload: bytes) -> bytes:
+        self.dual_single_mode = payload[1]
+        return b"\x01"
+
+    def _store_qt(self, payload: bytes) -> bytes:
+        if Command.SET_QT in self.failing_tag_commands:
+            return b"\x00"
+        self.qt_data = payload[-1]
         return b"\x01"
 
     def _respond_antenna_work_time(self, payload: bytes) -> bytes:
