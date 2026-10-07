@@ -12,6 +12,6 @@ address and TCP port. Listen for it:
    for reader in readers:
        print(reader.mac, reader.ip, reader.port)
 
-Each unique reader appears once. The packet carries no identification
-beyond the MAC address, so every broadcast within the listen window is
-collected.
+The listener runs for ``listen_seconds`` and returns one entry per
+unique MAC address, IP address and port, sorted by IP address and port.
+It listens on UDP port 1111 by default. Pass ``port`` to change that.

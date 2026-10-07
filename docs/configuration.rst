@@ -4,7 +4,8 @@ Configuration
 RF power
 --------
 
-Power is set per antenna, in dBm, split into receive and transmit:
+Power is set per antenna in dBm. ``set_rf_power`` sets one value,
+``set_antenna_power`` sets separate read and write power:
 
 .. code-block:: python
 
@@ -26,7 +27,18 @@ RF behaviour
    await client.set_fast_id(enabled=True)
    await client.set_tag_focus(enabled=False)
    await client.set_carrier_wave(enabled=False)
+   await client.set_fast_inventory_mode(enabled=True)
    print(await client.get_return_loss())
+
+Protocol type
+-------------
+
+.. code-block:: python
+
+   from chainway_serial import ProtocolType
+
+   await client.set_protocol_type(ProtocolType.ISO_18000_6C)
+   print(await client.get_protocol_type())
 
 Power and every setting that carries a ``save`` flag store the value
 across a power cycle by default. Pass ``save=False`` to keep it until
@@ -122,4 +134,42 @@ Peripherals
    await client.set_volume(5)
    await client.set_led(enabled=True)
    await client.blink_led(10, 20, 30)
+   await client.stop_buzzer()
    await client.set_gpo(output_0=True, output_1=False, relay_closed=True)
+   print(await client.get_gpo())
+
+Module settings
+---------------
+
+These commands come from the module-level protocol and the native
+libraries. Most take raw integers because no source documents their
+units:
+
+.. code-block:: python
+
+   print(await client.verify_voltage())
+   await client.set_temperature_protect(1)
+   await client.set_module_work_time(100)
+   await client.set_dual_single_mode(0)
+   await client.set_reader_idle_sleep_time(10)
+   await client.set_dwell_time(1000, 3)
+   data = await client.get_module_parameter(param_type=0, param_id=1)
+
+Firmware update
+---------------
+
+Reboot a firmware target into its bootloader, then send the image in
+64-byte blocks:
+
+.. code-block:: python
+
+   from chainway_serial import BootloaderTarget
+
+   await client.jump_to_bootloader(BootloaderTarget.UHF_MODULE)
+   await client.start_update()
+   for offset in range(0, len(image), 64):
+       await client.send_update_block(image[offset : offset + 64])
+   await client.stop_update()
+
+The update flow is reconstructed from the SDKs and has not run against
+a UR4.

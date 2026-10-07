@@ -12,8 +12,9 @@ The client takes one serialx URL and opens it with
    ChainwayClient("rfc2217://gateway:4001")
 
 The frame format and the command set are identical on RS-232 and TCP,
-so the same client works everywhere. Line settings only apply to serial
-device paths:
+so the same client works everywhere. The line settings ``baudrate``,
+``parity``, ``stopbits``, ``xonxoff`` and ``rtscts`` only apply to
+serial device paths:
 
 .. code-block:: python
 

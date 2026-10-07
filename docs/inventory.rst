@@ -22,7 +22,7 @@ sent immediately:
 
    async with aclosing(client.inventory()) as stream:
        async for tag in stream:
-           if tag.epc.startswith(b"e2"):
+           if tag.epc.startswith(b"\xe2"):
                break
 
 Or drive the scan manually:
@@ -32,20 +32,23 @@ Or drive the scan manually:
    await client.start_inventory()
    await client.stop_inventory()
 
-Phase reporting
----------------
+Phase and frequency reporting
+-----------------------------
 
-The official protocol document defines a phase reporting mode: pass
-``phase=True`` and every sighting carries a phase in degrees, 0 to 360.
+Pass ``phase=True`` and every sighting carries the tag phase in
+``tag.phase``. Pass ``frequency=True`` and every sighting carries the
+channel frequency in kHz in ``tag.frequency_khz``. Both can run
+together:
 
 .. code-block:: python
 
-   async for tag in client.inventory(phase=True):
-       print(tag.epc.hex(), tag.phase, tag.rssi)
+   async for tag in client.inventory(phase=True, frequency=True):
+       print(tag.epc.hex(), tag.phase, tag.frequency_khz, tag.rssi)
 
-The documented record shape carries the phase after the EPC. With TID
-or USER blocks enabled the position is inferred from that shape, so
-verify against live traffic before relying on it.
+``start_inventory`` takes the same two flags. The client reads both
+values from the end of the record, before the RSSI pair, like the 2025
+Java SDK. The phase is the raw 16-bit value. The official protocol
+document calls it degrees, which is unverified on live hardware.
 
 Single inventory
 ----------------
