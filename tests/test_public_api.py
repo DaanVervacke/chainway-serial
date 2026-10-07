@@ -7,7 +7,7 @@ import inspect
 import pytest
 
 import chainway_serial
-from chainway_serial import __all__, client, discovery, exceptions, models, parsers
+from chainway_serial import __all__, client, const, discovery, exceptions, models, parsers
 
 
 def test_all_entries_are_importable() -> None:
@@ -34,7 +34,7 @@ def test_reexports_are_identity_imports() -> None:
         if name == "__version__":
             continue
         symbol = getattr(chainway_serial, name)
-        sources = (client, discovery, exceptions, models, parsers)
+        sources = (client, const, discovery, exceptions, models, parsers)
         defining = [module for module in sources if symbol is getattr(module, name, None)]
         assert defining, f"{name} is not an identity re-export of a submodule symbol"
 

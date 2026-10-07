@@ -34,6 +34,8 @@ Models
    :members:
 .. autoclass:: chainway_serial.CollectedTags
    :members:
+.. autoclass:: chainway_serial.CollectedTagsFull
+   :members:
 .. autoclass:: chainway_serial.GpoState
    :members:
 .. autoclass:: chainway_serial.ReaderAddress
@@ -71,6 +73,10 @@ Enums
 .. autoclass:: chainway_serial.TriggerInput
    :members:
 .. autoclass:: chainway_serial.OutputRoute
+   :members:
+.. autoclass:: chainway_serial.BootloaderTarget
+   :members:
+.. autoclass:: chainway_serial.SensorSubcommand
    :members:
 
 Exceptions

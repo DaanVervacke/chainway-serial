@@ -9,6 +9,7 @@ from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
 from importlib.metadata import version as _version
 
 from .client import ChainwayClient, ConnectionLostCallback, TagCallback
+from .const import SensorSubcommand
 from .discovery import discover_readers
 from .exceptions import (
     ChainwayConnectionError,
@@ -83,6 +84,7 @@ __all__ = [
     "Region",
     "ReturnLoss",
     "RfLink",
+    "SensorSubcommand",
     "Tag",
     "TagCallback",
     "TagFilter",
