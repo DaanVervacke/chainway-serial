@@ -30,12 +30,11 @@ own:
    )
    await client.write_tag(MemoryBank.USER, 0, b"\xbe\xef", tag_filter=tag_filter)
 
-Block write and block erase take the same bank and word address:
+Block write takes the same bank and word address:
 
 .. code-block:: python
 
    await client.block_write_tag(MemoryBank.USER, 0, b"\x11\x22\x33\x44")
-   await client.block_erase_tag(MemoryBank.USER, 0, word_count=2)
 
 Errors
 ------
@@ -99,22 +98,8 @@ code ``0x01``.
    await client.set_protected_mode(protected=False, short_range=False)
 
 ``authenticate_tag`` sends the Gen2 v2.0 Authenticate command with a
-ten-byte challenge. ``set_block_permalock`` locks blocks for good. Impinj
-Monza QT tags have ``set_qt``, ``get_qt``, ``read_qt`` and ``write_qt``.
+ten-byte challenge. ``set_block_permalock`` locks blocks for good.
+``set_qt`` targets Impinj Monza QT tags.
 
-Not supported on the UR4
-------------------------
-
-The client also implements commands that other Chainway readers answer.
-A UR4 with UHF module firmware 7.40.1 does not support them. They raise
-:class:`chainway_serial.ChainwayUnsupportedCommandError`, time out, or
-return no data:
-
-* ``deactivate_tag``
-* the sensor tag commands: ``read_tag_sensor``, ``write_tag_calibration``,
-  ``start_tag_logging``, ``stop_tag_logging``, ``check_tag_sensor_mode``,
-  ``read_tag_sensor_voltage`` and ``read_tag_temperatures``
-* the collected tag storage: ``read_collected_tags``,
-  ``read_collected_tags_full``, ``get_collected_tag_count``,
-  ``get_new_collected_tag_count``, ``delete_collected_tags`` and
-  ``read_collected_tags_from_flash``
+The UR4 does not support every tag command the client implements. See
+:doc:`unsupported`.

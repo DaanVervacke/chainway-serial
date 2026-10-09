@@ -143,7 +143,7 @@ Peripherals
 
 ``set_buzzer`` turns the beep on tag reads on or off and survives a
 power cycle. The battery, barcode, beep, volume and LED commands
-belong to other Chainway readers. A UR4 does not support them.
+belong to other Chainway readers. See :doc:`unsupported`.
 
 Firmware update
 ---------------

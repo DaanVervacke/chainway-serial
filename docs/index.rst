@@ -18,6 +18,7 @@ changes their firmware.
    tag-operations
    configuration
    discovery
+   unsupported
    api
 
 Indices and tables
