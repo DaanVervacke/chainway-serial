@@ -18,6 +18,8 @@ Before 1.0, breaking changes ship as minor bumps.
 - Keep the probe script running when a read fails
 - Wait out the module mute after a factory restore
 - Stop a leftover scan when connecting
+- Reopen a TCP link that resets before its first answer
+- Listen 12 seconds for reader discovery by default
 
 ### Documentation
 
@@ -35,6 +37,9 @@ Before 1.0, breaking changes ship as minor bumps.
 - Record that a factory restore also resets the mainboard settings
 - Trim the readme to install, usage and development
 - Rewrite the documentation pages for library users
+- Record the TCP link behavior and the factory address reset
+- Record UDP push, scan handover and TCP timing
+- Align the guides with TCP testing, reset timing and the gate
 
 ### Features
 
@@ -50,6 +55,7 @@ Before 1.0, breaking changes ship as minor bumps.
 - Update the changelog
 - Update the changelog
 - Add UR4 mainboard firmware dumps
+- Update the changelog
 - Update the changelog
 - Update the changelog
 - Update the changelog
