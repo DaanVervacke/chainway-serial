@@ -183,7 +183,7 @@ Semantics from the DLL document: target 0 to 4 for S0 to S3 and SL, action 0 to 
 |---|---|---|---|
 | 0x28 | `save maskHi maskLo` | 0x29, payload `01` | Set antenna enable mask, 16 bits, high byte first, bit 0 = ANT1 through bit 15 = ANT16 |
 | 0x2A | empty | 0x2B, payload 2 bytes | Get antenna enable mask |
-| 0x4A | `setHi ant hi lo` or `ant hi lo` | 0x4B, payload `01` | Set antenna work time. The AAR sends `0x10 | ant`, the jar sends `ant`, so the high nibble is read as the save flag. Unit **unverified**. Antenna 16 collides with the save bit, the byte is the same either way |
+| 0x4A | `setHi ant hi lo` or `ant hi lo` | 0x4B, payload `01` | Set antenna work time. The AAR sends `0x10 | ant`, the jar sends `ant`, so the high nibble is read as the save flag. Unit **unverified**. Antenna 16 collides with the save bit, the byte is the same either way, so the client accepts antennas 1 to 15 for 0x4A and 0x4C |
 | 0x4C | `ant 00` | 0x4D, payload `01 ant hi lo` | Get antenna work time, 16-bit big-endian |
 
 ### Inventory control

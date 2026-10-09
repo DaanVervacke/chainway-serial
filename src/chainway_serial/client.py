@@ -30,8 +30,8 @@ from .const import (
     INVENTORY_KEEPALIVE_BYTE,
     INVENTORY_START_DELAY,
     MAINTENANCE_TICK,
-    MAX_ANTENNA,
     MAX_FIXED_FREQUENCY_KHZ,
+    MAX_WORK_TIME_ANTENNA,
     MIN_ANTENNA,
     MODULE_WORK_TIME_BYTES,
     MODULE_WORK_TIME_MAX,
@@ -833,7 +833,9 @@ class ChainwayClient:
         """Set the work time of one antenna.
 
         UHF module firmware 7.40.1 rejects the stored form, so pass
-        ``save=False`` on a UR4.
+        ``save=False`` on a UR4. The antenna number shares its byte with
+        the save flag, so antenna 16 cannot be addressed and the range
+        is 1 to 15.
 
         Raises:
             ValueError: The antenna number or the work time is out of
@@ -843,8 +845,10 @@ class ChainwayClient:
             ChainwayResponseError: The reader did not acknowledge the
                 write.
         """
-        if not MIN_ANTENNA <= antenna <= MAX_ANTENNA:
-            msg = f"antenna must be between {MIN_ANTENNA} and {MAX_ANTENNA}, got {antenna}"
+        if not MIN_ANTENNA <= antenna <= MAX_WORK_TIME_ANTENNA:
+            msg = (
+                f"antenna must be between {MIN_ANTENNA} and {MAX_WORK_TIME_ANTENNA}, got {antenna}"
+            )
             raise ValueError(msg)
         if not 0 <= work_time <= WORD_MAX:
             msg = f"work time must be between 0 and 65535, got {work_time}"
@@ -854,13 +858,15 @@ class ChainwayClient:
         _require_ack(response, Command.SET_ANTENNA_WORK_TIME)
 
     async def get_antenna_work_time(self, antenna: int) -> int:
-        """Return the work time of one antenna.
+        """Return the work time of one antenna, numbered 1 to 15.
 
         Raises:
             ValueError: The antenna number is out of range.
         """
-        if not MIN_ANTENNA <= antenna <= MAX_ANTENNA:
-            msg = f"antenna must be between {MIN_ANTENNA} and {MAX_ANTENNA}, got {antenna}"
+        if not MIN_ANTENNA <= antenna <= MAX_WORK_TIME_ANTENNA:
+            msg = (
+                f"antenna must be between {MIN_ANTENNA} and {MAX_WORK_TIME_ANTENNA}, got {antenna}"
+            )
             raise ValueError(msg)
         payload = await self._request(Command.GET_ANTENNA_WORK_TIME, bytes((antenna, 0x00)))
         require_status_header(payload, 4, STATUS_OK, "antenna")

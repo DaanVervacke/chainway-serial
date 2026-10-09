@@ -410,8 +410,8 @@ async def test_set_antenna_mask_rejects_a_bad_mask(client: ChainwayClient) -> No
 
 
 async def test_set_antenna_work_time_rejects_a_bad_antenna(client: ChainwayClient) -> None:
-    with pytest.raises(ValueError, match="antenna"):
-        await client.set_antenna_work_time(17, 100)
+    with pytest.raises(ValueError, match="between 1 and 15"):
+        await client.set_antenna_work_time(16, 100, save=False)
 
 
 async def test_set_antenna_work_time_rejects_a_bad_time(client: ChainwayClient) -> None:
@@ -422,6 +422,8 @@ async def test_set_antenna_work_time_rejects_a_bad_time(client: ChainwayClient) 
 async def test_get_antenna_work_time_rejects_a_bad_antenna(client: ChainwayClient) -> None:
     with pytest.raises(ValueError, match="antenna"):
         await client.get_antenna_work_time(0)
+    with pytest.raises(ValueError, match="between 1 and 15"):
+        await client.get_antenna_work_time(16)
 
 
 async def test_set_volume_rejects_a_bad_value(client: ChainwayClient) -> None:
