@@ -1,9 +1,12 @@
 chainway-serial
 ===============
 
-Asynchronous Python library for the Chainway UR4 fixed UHF RFID reader,
-over RS-232 and TCP, built on `serialx <https://github.com/puddly/serialx>`_.
-Requires Python >= 3.14.
+Unofficial asynchronous Python library to interact with Chainway UR4
+fixed UHF RFID readers over RS-232 and TCP, built on
+`serialx <https://github.com/puddly/serialx>`_. Requires Python >= 3.14.
+
+Not endorsed by Chainway. It may break without notice whenever Chainway
+changes their firmware.
 
 .. toctree::
    :maxdepth: 2
@@ -16,11 +19,6 @@ Requires Python >= 3.14.
    configuration
    discovery
    api
-
-The wire protocol is reverse engineered from the vendor SDKs. The full
-byte level reference lives in `docs/protocol.md
-<https://github.com/DaanVervacke/chainway-serial/blob/main/docs/protocol.md>`_
-in the repository.
 
 Indices and tables
 ===================

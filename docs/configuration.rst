@@ -47,12 +47,15 @@ power off.
 Resets
 ------
 
-Two reset commands exist, both from the official protocol document:
-
 .. code-block:: python
 
    await client.software_reset()
    await client.restore_factory_settings()
+
+``software_reset`` reboots the reader, which takes about two seconds.
+``restore_factory_settings`` resets the RF settings, and also turns the
+buzzer back on and returns the trigger parameters and the work mode to
+their defaults. The reader and destination network addresses stay.
 
 Gen2 parameters
 ---------------
@@ -127,23 +130,18 @@ Peripherals
 
 .. code-block:: python
 
-   print(await client.get_battery_level())
-   print(await client.scan_barcode())
-   await client.beep(duration=1)
-   await client.set_buzzer(enabled=True)
-   await client.set_volume(5)
-   await client.set_led(enabled=True)
-   await client.blink_led(10, 20, 30)
-   await client.stop_buzzer()
+   await client.set_buzzer(enabled=False)
    await client.set_gpo(output_0=True, output_1=False, relay_closed=True)
    print(await client.get_gpi())
+
+``set_buzzer`` turns the beep on tag reads on or off and survives a
+power cycle. The battery, barcode, beep, volume and LED commands
+belong to other Chainway readers. A UR4 does not support them.
 
 Module settings
 ---------------
 
-These commands come from the module-level protocol and the native
-libraries. Most take raw integers because no source documents their
-units:
+Most of these take raw integers with undocumented units:
 
 .. code-block:: python
 
@@ -171,5 +169,5 @@ Reboot a firmware target into its bootloader, then send the image in
        await client.send_update_block(image[offset : offset + 64])
    await client.stop_update()
 
-The update flow is reconstructed from the SDKs and has not run against
-a UR4.
+The update flow is untested on a UR4. A failed update can leave the
+reader unusable.

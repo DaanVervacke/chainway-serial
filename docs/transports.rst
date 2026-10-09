@@ -46,14 +46,15 @@ command with :class:`chainway_serial.ChainwayConnectionError`, fires the
 ``on_connection_lost`` callback, and the next command reconnects on
 its own.
 
+The reader keeps scanning when a link closes during a continuous
+inventory. ``connect`` therefore stops any running scan first and drops
+the tag sightings that arrive before the stop is acknowledged.
+
 Keepalive
 ---------
 
-The SDK connection managers keep the link alive in different ways. The
-Android SDK sends a heartbeat only after 5 seconds of inbound silence
-and treats 20 seconds of silence as a dead link, the Java jar polls
-every 2 seconds with a 10 second limit. This library sends a
-get-version frame every 5 seconds, or a bare ``00`` byte during an
-inventory, drops the link after 20 seconds of inbound silence on an
-idle link, and suspends the dead-link check while a scan runs. Tune it
-with ``keepalive_interval`` and ``dead_link_timeout``, both in seconds.
+The client sends a get-version frame every 5 seconds, or a bare ``00``
+byte during an inventory. It drops the link after 20 seconds of inbound
+silence on an idle link, and suspends that check while a scan runs.
+Tune it with ``keepalive_interval`` and ``dead_link_timeout``, both in
+seconds.

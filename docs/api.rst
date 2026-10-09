@@ -87,4 +87,5 @@ Exceptions
 .. autoclass:: chainway_serial.ChainwayTimeoutError
 .. autoclass:: chainway_serial.ChainwayProtocolError
 .. autoclass:: chainway_serial.ChainwayResponseError
+.. autoclass:: chainway_serial.ChainwayUnsupportedCommandError
 .. autoclass:: chainway_serial.ChainwayInventoryActiveError

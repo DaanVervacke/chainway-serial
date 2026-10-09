@@ -1,32 +1,34 @@
 Tag operations
 ==============
 
-Every tag operation except the sensor tag commands shares one request
-layout: a four-byte password, an optional filter that selects one tag,
-and the operation tail. Addresses and lengths are in 16-bit words.
+Read and write
+--------------
+
+Addresses and lengths are in 16-bit words:
 
 .. code-block:: python
 
    from chainway_serial import MemoryBank, TagFilter
 
-   data = await client.read_tag(MemoryBank.USER, word_address=2, word_count=2)
-   await client.write_tag(MemoryBank.USER, 2, b"\xe2\x80")
+   data = await client.read_tag(MemoryBank.USER, word_address=0, word_count=2)
+   await client.write_tag(MemoryBank.USER, 0, b"\xbe\xef\xca\xfe")
 
-Filters select the tag by matching bits in a memory bank. The address
-and length are in bits:
+``MemoryBank.RESERVED`` holds the kill password in words 0 and 1 and the
+access password in words 2 and 3.
+
+A filter selects one tag by matching bits in a memory bank. Its address
+and length are in bits. Without a filter the reader picks a tag on its
+own:
 
 .. code-block:: python
 
    tag_filter = TagFilter(
-       bank=MemoryBank.EPC,
-       bit_address=0x20,
-       bit_length=16,
-       data=b"\x12\x34",
+       bank=MemoryBank.TID,
+       bit_address=0,
+       bit_length=96,
+       data=tag.tid,
    )
-   await client.write_tag(MemoryBank.USER, 2, b"\xe2\x80", tag_filter=tag_filter)
-
-Without a filter the reader picks the tag on its own. Pass the access
-password with ``access_password`` when the tag is protected.
+   await client.write_tag(MemoryBank.USER, 0, b"\xbe\xef", tag_filter=tag_filter)
 
 Block write and block erase take the same bank and word address:
 
@@ -35,120 +37,84 @@ Block write and block erase take the same bank and word address:
    await client.block_write_tag(MemoryBank.USER, 0, b"\x11\x22\x33\x44")
    await client.block_erase_tag(MemoryBank.USER, 0, word_count=2)
 
+Errors
+------
+
+A failed tag operation raises :class:`chainway_serial.ChainwayResponseError`
+with the error code in the message:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Code
+     - Meaning
+   * - ``0x01``
+     - The tag rejected the operation: the memory is locked, the password is wrong, or the chip does not support the command
+   * - ``0x22``
+     - No tag answered, or the word window runs past the end of the bank
+
 Lock
 ----
 
-Lock tag memories with one of the four modes over a set of banks:
+Write an access password, then lock banks with it:
 
 .. code-block:: python
 
    from chainway_serial import LockBank, LockMode
 
+   password = bytes.fromhex("aabbccdd")
+   await client.write_tag(MemoryBank.RESERVED, 2, password, tag_filter=tag_filter)
    await client.lock_tag(
-       [LockBank.ACCESS_PASSWORD, LockBank.EPC],
-       LockMode.PERMANENTLY_LOCK,
+       [LockBank.USER],
+       LockMode.LOCK,
+       access_password=password,
+       tag_filter=tag_filter,
    )
 
-The library builds the three-byte lock code the SDKs generate: mask
-bits 19 down to 10 and action bits 9 down to 0, two bits per memory.
-The standalone builder is :func:`chainway_serial.build_lock_code`.
+``LockMode.OPEN`` unlocks again. ``PERMANENTLY_LOCK`` and
+``PERMANENTLY_OPEN`` cannot be undone. :func:`chainway_serial.build_lock_code`
+returns the three-byte lock code without sending it.
 
 Kill
 ----
 
-Kill needs the kill password, not the access password:
+Kill needs the kill password, not the access password. A killed tag
+never answers again:
 
 .. code-block:: python
 
    await client.kill_tag(b"\x12\x34\x56\x78")
 
-Authenticate
-------------
+Chip specific commands
+----------------------
 
-The Gen2 v2.0 Authenticate command needs the ten-byte IChallenge_TAM1
-data and returns sixteen bytes on success:
+These commands need a tag that supports them. Other tags answer error
+code ``0x01``.
 
 .. code-block:: python
 
    data = await client.authenticate_tag(challenge, key_id=0)
-   print(data.hex())
-
-Block permalock
----------------
-
-Blocks are windows of 16 blocks of 8 bytes. Read the per-block
-permalock status, or permalock blocks with a 16-bit mask:
-
-.. code-block:: python
-
    status = await client.read_block_permalock(MemoryBank.USER, 0, 1)
-   await client.set_block_permalock(MemoryBank.USER, 0, 1, mask=0xF000)
+   await client.set_block_permalock(MemoryBank.USER, 0, 1, mask=0x8000)
+   await client.set_protected_mode(protected=False, short_range=False)
 
-Monza QT
---------
+``authenticate_tag`` sends the Gen2 v2.0 Authenticate command with a
+ten-byte challenge. ``set_block_permalock`` locks blocks for good. Impinj
+Monza QT tags have ``set_qt``, ``get_qt``, ``read_qt`` and ``write_qt``.
 
-Impinj Monza QT tags have a public and a private memory profile. Set or
-get the QT control value, and read or write memory under a given
-control value:
+Not supported on the UR4
+------------------------
 
-.. code-block:: python
+The client also implements commands that other Chainway readers answer.
+A UR4 with UHF module firmware 7.40.1 does not support them. They raise
+:class:`chainway_serial.ChainwayUnsupportedCommandError`, time out, or
+return no data:
 
-   await client.set_qt(0x00)
-   qt = await client.get_qt()
-   data = await client.read_qt(0x00, MemoryBank.USER, 0, 2)
-   await client.write_qt(0x00, MemoryBank.USER, 0, b"\x12\x34")
-
-``set_qt`` sends opcode 0x97, which the 2025 Java SDK uses for a margin
-read instead. Which command the firmware runs is unverified.
-
-Protected mode and deactivate
------------------------------
-
-Both come from vendor sources that document no semantics:
-
-.. code-block:: python
-
-   await client.set_protected_mode(protected=True, short_range=False)
-   await client.deactivate_tag()
-
-Sensor tags
------------
-
-The 0x7C family reads sensor values and writes the calibration block.
-It selects the tag by EPC and applies its own antenna and power:
-
-.. code-block:: python
-
-   from chainway_serial import SensorSubcommand
-
-   code = await client.read_tag_sensor(
-       SensorSubcommand.TEMPERATURE_CODE, epc, antenna=1, power_dbm=30.0
-   )
-   await client.write_tag_calibration(epc, 1, 30.0, calibration)
-
-The 0xA3 family drives temperature logging tags, selected by a filter:
-
-.. code-block:: python
-
-   await client.start_tag_logging(tag_filter, min_code=0, max_code=1023, delay=1, interval=60)
-   mode = await client.check_tag_sensor_mode(tag_filter)
-   voltage = await client.read_tag_sensor_voltage(tag_filter)
-   temperatures = await client.read_tag_temperatures(tag_filter, start=0, count=10)
-   await client.stop_tag_logging(tag_filter)
-
-Collected tags
---------------
-
-In auto and trigger work mode the reader stores sightings. Pull them
-with:
-
-.. code-block:: python
-
-   collected = await client.read_collected_tags()
-   full = await client.read_collected_tags_full()
-   count = await client.get_collected_tag_count()
-   new = await client.get_new_collected_tag_count()
-   await client.delete_collected_tags()
-
-``read_collected_tags_from_flash`` pulls EPCs from the flash storage.
-Its presence on the UR4 is unverified.
+* ``deactivate_tag``
+* the sensor tag commands: ``read_tag_sensor``, ``write_tag_calibration``,
+  ``start_tag_logging``, ``stop_tag_logging``, ``check_tag_sensor_mode``,
+  ``read_tag_sensor_voltage`` and ``read_tag_temperatures``
+* the collected tag storage: ``read_collected_tags``,
+  ``read_collected_tags_full``, ``get_collected_tag_count``,
+  ``get_new_collected_tag_count``, ``delete_collected_tags`` and
+  ``read_collected_tags_from_flash``

@@ -35,20 +35,18 @@ Or drive the scan manually:
 Phase and frequency reporting
 -----------------------------
 
-Pass ``phase=True`` and every sighting carries the tag phase in
-``tag.phase``. Pass ``frequency=True`` and every sighting carries the
-channel frequency in kHz in ``tag.frequency_khz``. Both can run
-together:
+Pass ``phase=True`` and every sighting carries the tag phase in degrees,
+0 to 359, in ``tag.phase``. Pass ``frequency=True`` and every sighting
+carries the channel frequency in kHz in ``tag.frequency_khz``. Both can
+run together:
 
 .. code-block:: python
 
    async for tag in client.inventory(phase=True, frequency=True):
        print(tag.epc.hex(), tag.phase, tag.frequency_khz, tag.rssi)
 
-``start_inventory`` takes the same two flags. The client reads both
-values from the end of the record, before the RSSI pair, like the 2025
-Java SDK. The phase is the raw 16-bit value. The official protocol
-document calls it degrees, which is unverified on live hardware.
+``start_inventory`` takes the same two flags. With ``phase=True`` alone
+the reader leaves the TID and USER data out of the sightings.
 
 Single inventory
 ----------------
@@ -77,8 +75,8 @@ USER window is set in 16-bit words:
 Tag callbacks
 -------------
 
-Tags that arrive outside an active iteration, for example in auto or
-trigger work mode, go to the ``on_tag`` callback:
+Tags that arrive outside an active iteration go to the ``on_tag``
+callback:
 
 .. code-block:: python
 
