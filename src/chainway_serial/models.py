@@ -33,8 +33,13 @@ class WorkMode(IntEnum):
 
 
 class MemoryBank(IntEnum):
-    """Gen2 memory bank numbers used by tag operations and filters."""
+    """Gen2 memory bank numbers used by tag operations and filters.
 
+    The RESERVED bank holds the kill password in words 0 and 1 and the
+    access password in words 2 and 3.
+    """
+
+    RESERVED = 0x00
     EPC = 0x01
     TID = 0x02
     USER = 0x03
