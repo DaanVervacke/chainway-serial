@@ -73,7 +73,7 @@ Receiver state machine, as implemented by the SDKs: hunt for `A5`, expect `5A`, 
 - A response frame carries command = request command + 1. Request 0x02, response 0x03. Request 0x8C, response 0x8D.
 - Set operations answer with payload `01` on success. Set operations that report an error code answer with a non-`01` payload, exact codes **unverified**.
 - Tag operations answer with payload `01 00` on success. A failure answers `00 code`, read failures append `00 00`. Firmware 7.40.1 returns two codes with real tags: `01` when the tag rejects the operation, for locked memory, a wrong password or a command the chip lacks, and `22` when no tag matches the filter or the word window runs past the end of the bank. Other codes are **unverified**.
-- The UHF module answers an opcode it does not support with a bare `00` payload. The client raises `ChainwayUnsupportedCommandError` for that reply on the commands where firmware 7.40.1 returns it.
+- The UHF module answers an opcode it does not support with a bare `00` payload. A set command whose form the module rejects, such as 0x4A with the save bit, gets the same reply. The client raises `ChainwayUnsupportedCommandError` for a bare `00` on every command that never answers with a single `00` byte when it succeeds.
 - Commands in the 0xA1 configuration family carry a subcommand in payload byte 0. Set operations answer with payload `01`. Get operations echo the subcommand number in payload byte 0, followed by the requested values.
 - Commands 0x06 and 0x70 carry an operation selector in payload byte 0, see the tables below.
 - The SDKs wait up to 2000 ms for a response.

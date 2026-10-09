@@ -372,6 +372,8 @@ class FakeReaderLogic:
         return b"\x01"
 
     def _store_antenna_work_time(self, payload: bytes) -> bytes:
+        if payload[0] & 0x10:
+            return b"\x00"
         self.antenna_work_time[payload[0] & 0x0F] = payload[1] << 8 | payload[2]
         return b"\x01"
 

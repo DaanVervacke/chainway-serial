@@ -48,7 +48,7 @@ Every exception derives from :class:`chainway_serial.ChainwayError`.
    * - ``ChainwayResponseError``
      - The reader rejected the request or answered with an unexpected payload
    * - ``ChainwayUnsupportedCommandError``
-     - The reader does not support the command, a subclass of ``ChainwayResponseError``
+     - The reader answered a bare ``00``: it does not support the command or rejects the form that was sent. A subclass of ``ChainwayResponseError``
    * - ``ChainwayInventoryActiveError``
      - A continuous inventory is running
    * - ``ChainwayProtocolError``

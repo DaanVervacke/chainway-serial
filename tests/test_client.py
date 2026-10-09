@@ -13,6 +13,7 @@ from chainway_serial import (
     ChainwayInventoryActiveError,
     ChainwayResponseError,
     ChainwayTimeoutError,
+    ChainwayUnsupportedCommandError,
     FirmwareVersion,
     InventoryMode,
     LockBank,
@@ -334,9 +335,10 @@ async def test_antenna_work_time_roundtrip(
     await client.set_antenna_work_time(1, 200, save=False)
     assert received(logic, Command.SET_ANTENNA_WORK_TIME) == b"\x01\x00\xc8"
     assert await client.get_antenna_work_time(1) == 200
-    await client.set_antenna_work_time(2, 300, save=True)
+    with pytest.raises(ChainwayUnsupportedCommandError, match="0x4a or this form"):
+        await client.set_antenna_work_time(2, 300, save=True)
     assert received(logic, Command.SET_ANTENNA_WORK_TIME) == b"\x12\x01\x2c"
-    assert await client.get_antenna_work_time(2) == 300
+    assert await client.get_antenna_work_time(2) != 300
 
 
 async def test_fast_inventory_mode_sends_the_documented_payload(

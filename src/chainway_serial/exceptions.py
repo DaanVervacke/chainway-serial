@@ -24,7 +24,11 @@ class ChainwayResponseError(ChainwayError):
 
 
 class ChainwayUnsupportedCommandError(ChainwayResponseError):
-    """The reader answered with a bare 00 byte, it does not support the command."""
+    """The reader answered with a bare 00 byte.
+
+    The reader does not support the command, or rejects the form that
+    was sent, such as a stored setting it only accepts as volatile.
+    """
 
 
 class ChainwayInventoryActiveError(ChainwayError):

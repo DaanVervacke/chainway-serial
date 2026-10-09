@@ -164,6 +164,7 @@ def _link_error(exc: Exception | None) -> ChainwayError:
 
 
 def _require_ack(payload: bytes, command: Command) -> None:
+    _reject_unsupported(payload, command)
     if not payload or payload[0] != STATUS_OK:
         msg = f"command {command:#04x} was not acknowledged, got payload {payload!r}"
         raise ChainwayResponseError(msg)
@@ -171,7 +172,10 @@ def _require_ack(payload: bytes, command: Command) -> None:
 
 def _reject_unsupported(payload: bytes, command: Command) -> None:
     if payload == UNSUPPORTED_REPLY:
-        msg = f"the reader does not support command {command:#04x}, it answered a bare 00 byte"
+        msg = (
+            f"the reader does not support command {command:#04x} or this form of it,"
+            " it answered a bare 00 byte"
+        )
         raise ChainwayUnsupportedCommandError(msg)
 
 
@@ -216,6 +220,14 @@ class ChainwayClient:
     rfc2217 or ESPHome proxies. One request runs at a time, tag
     sightings stream through :meth:`inventory`, and after a link drop
     the next command reconnects on its own.
+
+    Every command can raise :class:`ChainwayConnectionError`,
+    :class:`ChainwayTimeoutError` and :class:`ChainwayResponseError`.
+    A bare 00 reply raises :class:`ChainwayUnsupportedCommandError`, a
+    subclass of :class:`ChainwayResponseError`. While a continuous
+    inventory runs, every command except stop inventory raises
+    :class:`ChainwayInventoryActiveError`. The ``Raises`` section of a
+    method lists only the errors specific to it.
     """
 
     def __init__(
@@ -747,6 +759,7 @@ class ChainwayClient:
         """Set the air interface protocol type."""
         payload = bytes((ProtocolTypeSelector.SET, protocol_type))
         response = await self._request(Command.SET_PROTOCOL_TYPE, payload)
+        _reject_unsupported(response, Command.SET_PROTOCOL_TYPE)
         if response != b"\x00\x01":
             msg = f"protocol type set was not acknowledged, got payload {response!r}"
             raise ChainwayResponseError(msg)
@@ -825,6 +838,8 @@ class ChainwayClient:
         Raises:
             ValueError: The antenna number or the work time is out of
                 range.
+            ChainwayUnsupportedCommandError: The reader rejected the
+                form, as a UR4 does with ``save=True``.
             ChainwayResponseError: The reader did not acknowledge the
                 write.
         """
@@ -1801,6 +1816,7 @@ class ChainwayClient:
         """
         _require_byte("volume", volume)
         response = await self._request(Command.CONFIG, bytes((ConfigSubcommand.SET_VOLUME, volume)))
+        _reject_unsupported(response, Command.CONFIG)
         if response[:1] != b"\x01" and response != b"\x11\x01":
             msg = f"volume set was not acknowledged, got payload {response!r}"
             raise ChainwayResponseError(msg)

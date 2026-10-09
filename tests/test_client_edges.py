@@ -10,6 +10,7 @@ from chainway_serial import (
     ChainwayConnectionError,
     ChainwayResponseError,
     ChainwayTimeoutError,
+    ChainwayUnsupportedCommandError,
     FirmwareVersion,
     InventoryMode,
     MemoryBank,
@@ -329,9 +330,45 @@ async def test_failing_ack_raises(
     client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
 ) -> None:
     logic, _ = reader_server
-    logic._responders[Command.RESTORE_FACTORY_SETTINGS] = lambda _payload: b"\x00"
+    logic._responders[Command.RESTORE_FACTORY_SETTINGS] = lambda _payload: b"\x02"
     with pytest.raises(ChainwayResponseError, match="not acknowledged"):
         await client.restore_factory_settings()
+
+
+async def test_bare_zero_ack_raises_unsupported(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    logic._responders[Command.SET_DWELL_TIME] = lambda _payload: b"\x00"
+    with pytest.raises(ChainwayUnsupportedCommandError, match="0xb2 or this form"):
+        await client.set_dwell_time(1000, 3)
+
+
+async def test_bare_zero_protocol_type_raises_unsupported(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    logic._responders[Command.SET_PROTOCOL_TYPE] = lambda _payload: b"\x00"
+    with pytest.raises(ChainwayUnsupportedCommandError):
+        await client.set_protocol_type(ProtocolType.ISO_18000_6C)
+
+
+async def test_bare_zero_volume_raises_unsupported(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    logic._config_responders[0x11] = lambda _payload: b"\x00"
+    with pytest.raises(ChainwayUnsupportedCommandError):
+        await client.set_volume(5)
+
+
+async def test_bare_zero_status_reply_raises_unsupported(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    logic._responders[Command.GET_TEMPERATURE_PROTECT] = lambda _payload: b"\x00"
+    with pytest.raises(ChainwayUnsupportedCommandError, match="temperature protect"):
+        await client.get_temperature_protect()
 
 
 async def test_failing_protocol_type_ack_raises(

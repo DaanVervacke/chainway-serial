@@ -40,13 +40,14 @@ from .const import (
     TEMP_CODE_SIGN_BIT,
     TEMP_CODE_SPAN,
     TID_SIZE,
+    UNSUPPORTED_REPLY,
     USER_BLOCK_MARGIN,
     WORD_MODULUS,
     WORD_SIGN_BIT,
     SensorSubcommand,
     TagSensorSubcommand,
 )
-from .exceptions import ChainwayResponseError
+from .exceptions import ChainwayResponseError, ChainwayUnsupportedCommandError
 from .models import (
     AntennaPower,
     CollectedTags,
@@ -100,9 +101,13 @@ def require_status_header(payload: bytes, size: int, status: int, name: str) -> 
     """Require a minimum payload length and a status byte in front.
 
     Raises:
+        ChainwayUnsupportedCommandError: The payload is a bare 00 byte.
         ChainwayResponseError: The payload is too short or starts with
             a different byte.
     """
+    if payload == UNSUPPORTED_REPLY:
+        msg = f"the reader does not support the {name} command, it answered a bare 00 byte"
+        raise ChainwayUnsupportedCommandError(msg)
     _require(
         len(payload) >= size and payload[0] == status,
         f"{name} payload must start with {status:#04x} and carry at least {size} bytes,"
