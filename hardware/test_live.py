@@ -25,7 +25,7 @@ from chainway_serial import (
 )
 from chainway_serial.models import OutputRoute, TriggerInput
 
-MUTE_WINDOW_SECONDS = 4.0
+FACTORY_RESTORE_SETTLE_SECONDS = 4.0
 PARTIAL_FRAME = b"\xa5\x5a\x00\xff\x02\xff\x0d\x0a"
 
 
@@ -54,14 +54,17 @@ async def test_config_reads(client: ChainwayClient) -> None:
     assert await client.get_work_mode() is WorkMode.COMMAND
 
 
-async def test_rf_power_roundtrip(client: ChainwayClient) -> None:
-    original = (await client.get_rf_power())[0].read_power_dbm
-    await client.set_rf_power(25.0, antenna=1, save=False)
+async def test_rf_power_write_leaves_lower_antennas_alone(
+    client: ChainwayClient,
+) -> None:
+    before = await client.get_rf_power()
+    original = before[1].write_power_dbm
+    await client.set_rf_power(25.0, antenna=2, save=False)
     after = await client.get_rf_power()
-    assert all(power.read_power_dbm == 25.0 for power in after)
-    await client.set_rf_power(original, antenna=1, save=False)
-    restored = await client.get_rf_power()
-    assert restored[0].read_power_dbm == original
+    assert after[0].write_power_dbm == before[0].write_power_dbm
+    assert after[1].write_power_dbm == 25.0
+    await client.set_rf_power(original, antenna=2, save=False)
+    assert (await client.get_rf_power())[1].write_power_dbm == original
 
 
 async def test_region_roundtrip(client: ChainwayClient) -> None:
@@ -125,17 +128,14 @@ async def test_trigger_config_roundtrip(client: ChainwayClient) -> None:
         original.input, original.work_time_ms + 1000, original.min_interval_ms, original.output
     )
     await client.set_trigger_config(variant)
-    await asyncio.sleep(MUTE_WINDOW_SECONDS)
     assert await client.get_trigger_config() == variant
     await client.set_trigger_config(original)
-    await asyncio.sleep(MUTE_WINDOW_SECONDS)
     assert await client.get_trigger_config() == original
 
 
 async def test_reader_address_set_same_value(client: ChainwayClient) -> None:
     original = await client.get_reader_address()
     await client.set_reader_address(original)
-    await asyncio.sleep(MUTE_WINDOW_SECONDS)
     assert await client.get_reader_address() == original
 
 
@@ -230,7 +230,7 @@ async def test_software_reset_then_factory_restore(client: ChainwayClient) -> No
             continue
 
     await client.restore_factory_settings()
-    await asyncio.sleep(MUTE_WINDOW_SECONDS)
+    await asyncio.sleep(FACTORY_RESTORE_SETTLE_SECONDS)
     assert await client.get_version() is not None
     assert (await client.get_inventory_mode()).mode is InventoryMode.EPC
     assert await client.get_antenna_mask() == 1
