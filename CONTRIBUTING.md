@@ -46,7 +46,7 @@ Raw probe output stays in `captures/`, which is git-ignored. Tag access password
 
 ## Protocol ground truth
 
-The vendor SDKs are the only protocol source until a reader is on hand. The decompiled trees are rebuilt from the three RAR archives at the repository root when needed. When live hardware contradicts `docs/protocol.md`, the document wins only after the capture proves it: record the frame in `captures/`, update the document, and pin the new bytes in a test.
+The decompiled vendor SDKs were the first protocol source. Since October 2026 one UR4 checks them on hardware, see "Live verification" in `docs/protocol.md`. The decompiled trees are rebuilt from the three RAR archives at the repository root when needed. When live hardware contradicts `docs/protocol.md`, the document wins only after the capture proves it: record the frame in `captures/`, update the document, and pin the new bytes in a test.
 
 ## Test and repository rules
 

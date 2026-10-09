@@ -1,6 +1,6 @@
 # Chainway UR4 protocol reference
 
-Wire protocol for the Chainway UR4 fixed UHF RFID reader, reconstructed from the vendor SDKs. Every byte layout below comes from decompiled code in those SDKs, not from observation on hardware. Items marked **unverified** need a live reader to confirm.
+Wire protocol for the Chainway UR4 fixed UHF RFID reader, reconstructed from the vendor SDKs and checked on one UR4 in October 2026. The byte layouts come from decompiled code in those SDKs. "Live verification, UR4 firmware 7.40.1" records what the hardware confirmed or corrected. Items marked **unverified** still need a live reader.
 
 Sources:
 
@@ -35,7 +35,7 @@ Offset  Size  Field
 6+N     2     Tail: 0D 0A
 ```
 
-The official protocol document lists `C8 8C` as equally valid next to `A5 5A`, and the vendor's native receiver hunts both. This library sends `A5 5A`, like the Android SDK and the Windows DLL, and its parser accepts both. Which header the UR4 answers with is **unverified**. The Java SDKs reject frames above 2048 bytes, the native library accepts up to 4096, so the window is **unverified** at the top end.
+The official protocol document lists `C8 8C` as equally valid next to `A5 5A`, and the vendor's native receiver hunts both. This library sends `A5 5A`, like the Android SDK and the Windows DLL, and its parser accepts both. Firmware 7.40.1 accepts both and answers with the header of the request. The Java SDKs reject frames above 2048 bytes, the native library accepts up to 4096, so the window is **unverified** at the top end.
 
 The Windows `UHFAPI.dll` (64-bit build identical to the Java demo copy, 32-bit build in the C# app, same 458 exports) has two receive paths. The stream framer behind the read thread, used on serial, TCP, UDP and USB, accepts `A5` or `C8` as byte 0 and `5A` or `8C` as byte 1, checked independently, so a mixed pair would pass too. It takes lengths from 8 to 4096, XORs from the length bytes through the payload, requires `0D 0A`, and resets to the header hunt on any violation without rewinding to the byte after the header. The command response helper behind the `*_RecvData` builders accepts only `A5 5A` and 8 to 2048 bytes, and rejects a response unless its command equals the request command plus one. The DLL sends `A5 5A` for every command and no `C8 8C` appears in its code. Its static frames are the stop `A5 5A 00 08 8C 84 0D 0A` and the start `A5 5A 00 0A 82 00 00 88 0D 0A`, so the `27 10` start payload is specific to the npm client. The vendor clients therefore prove what the host accepts and sends, not what the firmware answers with.
 
@@ -81,7 +81,7 @@ Receiver state machine, as implemented by the SDKs: hunt for `A5`, expect `5A`, 
 
 ### Keepalive and heartbeat
 
-Client-side policy from the SDK connection managers. Whether the reader enforces any of this is **unverified**.
+Client-side policy from the SDK connection managers. Firmware 7.40.1 enforces none of it: after 60 seconds without traffic it answers normally.
 
 The Android SDK connection managers send a heartbeat only after 5 seconds of inbound silence, at most every 3 seconds, and suspend the dead-link check while an inventory runs. Idle they send a get-version frame, during inventory a single `00` byte, and 20 seconds of inbound silence on an idle link marks it dead. The Java jar sends get-version every 2 seconds, uses a 10 second dead link, and never drops the link during inventory. This library implements a fixed `keepalive_interval` of 5 seconds, the 20 second Android dead-link value, and suspends the dead-link check while an inventory runs. All three intervals are client parameters. The bare `00` byte is not a valid frame, the parser must tolerate it.
 
@@ -258,7 +258,7 @@ Values are hex bit positions. The generator ORs one column per selected bank, th
 | 0xE9 | `01` | 0xEA, payload `cntHi cntLo` | Get count of new collected tags |
 | 0xEB | `FF` | 0xEC, payload `count(1) | count times: [len][record bytes]` | Pull collected tag data from flash. The layout comes from the Android demo decode, the Java jar passes the payload through raw, so it is **unverified** on the UR4 |
 
-Presence of the flash commands on the UR4 is **unverified**, the Android SDK inherits them from the A8 product line.
+The Android SDK inherits the flash commands from the A8 product line. On the UR4 with firmware 7.40.1, 0xE9 gets a bare `00` answer, so the collected tag storage belongs to other hardware. 0xEB is untested.
 
 ### Configuration family, command 0xA1
 
@@ -382,7 +382,7 @@ The official protocol document V2.1.2 describes the UHF module protocol, one lay
 The deltas between the two layers:
 
 - The document's examples all use the `C8 8C` header.
-- At module level 0x68 is the software reset and 0x74 the factory reset, while the 2024 Java SDK knows only 0x74 and calls it the soft reset. The 2025 Java SDK has both, 0x68 as `uhfReset` and 0x74 renamed `factoryReset`. The Android native libraries `libDeviceAPIM.so` and `libDeviceAPIQ.so` (DeviceAPI 20250209) build 0x68 as their soft reset frame, `A5 5A 00 08 68 60 0D 0A`, and contain no 0x74 builder. The library implements both commands per the document. Which behavior the UR4 firmware implements for 0x74 is **unverified**
+- At module level 0x68 is the software reset and 0x74 the factory reset, while the 2024 Java SDK knows only 0x74 and calls it the soft reset. The 2025 Java SDK has both, 0x68 as `uhfReset` and 0x74 renamed `factoryReset`. The Android native libraries `libDeviceAPIM.so` and `libDeviceAPIQ.so` (DeviceAPI 20250209) build 0x68 as their soft reset frame, `A5 5A 00 08 68 60 0D 0A`, and contain no 0x74 builder. The library implements both commands per the document. On the UR4, firmware 7.40.1 treats 0x74 as the factory reset of the module settings and keeps the network addresses, and the mainboard answers 0x68 by rebooting the whole reader
 - Tag operation error responses carry an error flag after the success flag: 0x01 means the operation failed and 0x22 means the tag could not be recognized.
 - The document defines 0x26 as get return loss. The 2024 Java SDK and the older native libraries read the first payload byte of the 0x27 response as a carrier wave on/off state, which is the port-1 number of the return loss layout. The library follows the document. The 2025 Java SDK implements the V2.1.2 meaning, return loss as `port loss` pairs, and also parses 0x4F with `payload[1]` bit 0 as ANT1 through bit 7 as ANT8 and `payload[0]` as ANT9 to ANT16. The 2024 Java SDK compared the wrong values for ANT5 to ANT16 and never decoded them.
 - Commands 0xA1 through 0xFF are reserved at module level. The reader protocol uses them: the 0xA1 configuration family, the 0xE4 peripherals and the 0xE0 collected tag pull exist only at reader level.
