@@ -35,10 +35,10 @@ Protocol type
 
 .. code-block:: python
 
-   from chainway_serial import ProtocolType
-
-   await client.set_protocol_type(ProtocolType.ISO_18000_6C)
    print(await client.get_protocol_type())
+
+A UR4 reports ``ProtocolType.ISO_18000_6C`` and rejects
+``set_protocol_type`` with :class:`chainway_serial.ChainwayResponseError`.
 
 Power and every setting that carries a ``save`` flag store the value
 across a power cycle by default. Pass ``save=False`` to keep it until
