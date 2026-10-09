@@ -88,7 +88,7 @@ class UartBaudRate(IntEnum):
     The code sets the link between the UR4 mainboard and its UHF
     module. The mainboard follows codes 0x02 and 0x03, so the host
     port moves with them at the next power cycle. The module also
-    accepts code 0x01, which the mainboard does not follow: the module
+    accepts code 0x01, 57600, which the mainboard does not follow: the module
     then becomes unreachable from the host. This enum leaves 0x01 out
     on purpose.
     """

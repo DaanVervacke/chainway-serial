@@ -51,6 +51,10 @@ def test_get_uart_baudrate_frame_matches_the_captured_reference() -> None:
     assert build_frame(0x1E) == bytes.fromhex("A55A00081E160D0A")
 
 
+def test_pending_uart_code_57600_reply_matches_the_captured_reference() -> None:
+    assert parse_frame(bytes.fromhex("A55A000A1F0101150D0A")) == (0x1F, b"\x01\x01")
+
+
 def test_read_tag_frame_matches_the_protocol_reference() -> None:
     payload = bytes.fromhex("0000000001000000000300020002")
     assert build_frame(0x84, payload) == bytes.fromhex(

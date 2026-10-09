@@ -636,10 +636,25 @@ class ChainwayClient:
         _require_ack(response, Command.SET_UART_BAUDRATE)
 
     async def get_uart_baudrate(self) -> UartBaudRate:
-        """Return the pending UART baud rate code."""
+        """Return the pending UART baud rate code.
+
+        Raises:
+            ChainwayResponseError: The module reports a code outside
+                :class:`UartBaudRate`, such as 0x01 for 57600. The
+                mainboard does not follow that rate, so the module
+                becomes unreachable at the next power cycle unless
+                :meth:`set_uart_baudrate` stores a supported code first.
+        """
         payload = await self._request(Command.GET_UART_BAUDRATE)
         require_status_header(payload, 2, STATUS_OK, "UART baud rate")
-        return UartBaudRate(payload[1])
+        try:
+            return UartBaudRate(payload[1])
+        except ValueError as err:
+            msg = (
+                f"the module reports internal baud code {payload[1]:#04x}, which the mainboard"
+                " does not follow. Store UartBaudRate.BAUD_115200 before the next power cycle"
+            )
+            raise ChainwayResponseError(msg) from err
 
     async def set_rf_link(self, mode: RfLink, *, save: bool = True) -> None:
         """Set the recommended RF link combination."""

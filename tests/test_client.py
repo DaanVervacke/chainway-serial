@@ -259,6 +259,15 @@ async def test_uart_baudrate_refuses_codes_outside_the_enum(
     assert Command.SET_UART_BAUDRATE not in commands_seen(logic)
 
 
+async def test_uart_baudrate_reports_a_pending_code_outside_the_enum(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    logic.uart_baudrate = 0x01
+    with pytest.raises(ChainwayResponseError, match="0x01"):
+        await client.get_uart_baudrate()
+
+
 async def test_fast_id(client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]) -> None:
     logic, _ = reader_server
     await client.set_fast_id(enabled=False)
