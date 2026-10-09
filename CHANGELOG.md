@@ -16,6 +16,7 @@ Before 1.0, breaking changes ship as minor bumps.
 - Refuse internal baud codes outside UartBaudRate
 - Raise a response error for an unsupported pending baud code
 - Keep the probe script running when a read fails
+- Wait out the module mute after a factory restore
 
 ### Documentation
 
@@ -28,12 +29,15 @@ Before 1.0, breaking changes ship as minor bumps.
 - Record setting persistence and drop local file references
 - Update the readme with the live verification status
 - Replace stale unverified notes with live findings
+- Record the live tag session findings
 
 ### Features
 
 - Export SensorSubcommand
 - Add UART baud rate get and set commands
 - Replace get_gpo with get_gpi
+- Add the reserved memory bank for password access
+- Raise ChainwayUnsupportedCommandError and name tag error codes
 
 ### Maintenance
 
@@ -41,6 +45,7 @@ Before 1.0, breaking changes ship as minor bumps.
 - Update the changelog
 - Update the changelog
 - Add UR4 mainboard firmware dumps
+- Update the changelog
 
 ## [0.2.0] - 2026-10-04
 
