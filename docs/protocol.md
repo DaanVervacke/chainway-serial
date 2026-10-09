@@ -578,7 +578,7 @@ The application then repeats the network block and prints `Wire break ......` wh
 - An unplugged USB adapter surfaces on macOS as a read error, `OSError(6, 'Device not configured')`, within a second
 - 0x74 factory restore answers `01` about 0.6 seconds after the request, then the module drops every request for up to 1.5 seconds after that answer. The client waits 1.5 seconds after the answer before the next request
 - 0xA1 sub 05 work mode switches to auto and back to command over serial without trouble
-- A scan left running by a closed connection keeps streaming. The next connection receives those records, and a scan started with other reporting flags then misreads them
+- A scan left running by a closed connection keeps streaming. The next connection receives those records, and a scan started with other reporting flags then misreads them. Stop inventory answers `01` on an idle reader too, and a request sent right after the stop answer is served. The client sends stop inventory on every connect, like the Android SDK, and drops the tag records that arrive before the answer
 
 ### Tags on the antenna
 
