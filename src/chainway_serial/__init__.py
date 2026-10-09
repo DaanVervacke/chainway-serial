@@ -45,6 +45,7 @@ from .models import (
     TagFilter,
     TriggerConfig,
     TriggerInput,
+    UartBaudRate,
     WorkMode,
 )
 from .parsers import build_lock_code
@@ -90,6 +91,7 @@ __all__ = [
     "TagFilter",
     "TriggerConfig",
     "TriggerInput",
+    "UartBaudRate",
     "WorkMode",
     "__version__",
     "build_lock_code",

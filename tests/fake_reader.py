@@ -87,6 +87,7 @@ class FakeReaderLogic:
         self.trigger_config = b"\x00\x00\x64\x00\x0a\x00"
         self.volume = 0x05
         self.antenna_work_time: dict[int, int] = {1: 100}
+        self.uart_baudrate = 0x02
 
     def _build_responders(self) -> dict[int, Responder]:
         return {
@@ -106,6 +107,8 @@ class FakeReaderLogic:
             Command.GET_RETURN_LOSS: lambda _payload: self.return_loss_payload,
             Command.SET_GEN2_PARAMETERS: self._store_gen2_parameters,
             Command.GET_GEN2_PARAMETERS: lambda _payload: self.gen2_payload,
+            Command.SET_UART_BAUDRATE: self._store_uart_baudrate,
+            Command.GET_UART_BAUDRATE: lambda _payload: b"\x01" + bytes((self.uart_baudrate,)),
             Command.SET_RF_LINK: self._store_rf_link,
             Command.GET_RF_LINK: lambda _payload: b"\x01\x00" + bytes((self.rf_link,)),
             Command.SET_FAST_ID: self._store_fast_id,
@@ -405,6 +408,10 @@ class FakeReaderLogic:
 
     def _store_fast_id(self, payload: bytes) -> bytes:
         self.fast_id = payload[0]
+        return b"\x01"
+
+    def _store_uart_baudrate(self, payload: bytes) -> bytes:
+        self.uart_baudrate = payload[0]
         return b"\x01"
 
     def _store_tag_focus(self, payload: bytes) -> bytes:

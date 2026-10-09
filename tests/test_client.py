@@ -26,6 +26,7 @@ from chainway_serial import (
     TagFilter,
     TriggerConfig,
     TriggerInput,
+    UartBaudRate,
     WorkMode,
 )
 from chainway_serial.const import Command, SensorSubcommand
@@ -238,6 +239,15 @@ async def test_rf_link(client: ChainwayClient, reader_server: tuple[FakeReaderLo
     await client.set_rf_link(RfLink.PR_ASK_MILLER_4_640_KHZ, save=True)
     assert received(logic, Command.SET_RF_LINK) == b"\x00\x01\x03"
     assert await client.get_rf_link() is RfLink.PR_ASK_MILLER_4_640_KHZ
+
+
+async def test_uart_baudrate(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    await client.set_uart_baudrate(UartBaudRate.BAUD_460800)
+    assert received(logic, Command.SET_UART_BAUDRATE) == b"\x03"
+    assert await client.get_uart_baudrate() is UartBaudRate.BAUD_460800
 
 
 async def test_fast_id(client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]) -> None:

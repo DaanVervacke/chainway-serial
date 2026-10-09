@@ -88,6 +88,7 @@ from .models import (
     TagFilter,
     TriggerConfig,
     TriggerInput,
+    UartBaudRate,
     WorkMode,
 )
 from .parsers import (
@@ -576,6 +577,22 @@ class ChainwayClient:
         """Return the Gen2 inventory parameters."""
         payload = await self._request(Command.GET_GEN2_PARAMETERS)
         return unpack_gen2_parameters(payload)
+
+    async def set_uart_baudrate(self, baudrate: UartBaudRate) -> None:
+        """Set the UART baud rate, applied at the next reader power cycle.
+
+        The reader acknowledges the command but keeps talking at the
+        current rate until it reboots. The setting persists across
+        power loss. Verified on UR4 firmware 7.40.1.
+        """
+        response = await self._request(Command.SET_UART_BAUDRATE, bytes((baudrate,)))
+        _require_ack(response, Command.SET_UART_BAUDRATE)
+
+    async def get_uart_baudrate(self) -> UartBaudRate:
+        """Return the pending UART baud rate code."""
+        payload = await self._request(Command.GET_UART_BAUDRATE)
+        require_status_header(payload, 2, STATUS_OK, "UART baud rate")
+        return UartBaudRate(payload[1])
 
     async def set_rf_link(self, mode: RfLink, *, save: bool = True) -> None:
         """Set the recommended RF link combination."""

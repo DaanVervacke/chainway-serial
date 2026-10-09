@@ -43,6 +43,14 @@ def test_get_gen2_frame_matches_the_protocol_reference() -> None:
     assert build_frame(0x22) == bytes.fromhex("A55A0008222A0D0A")
 
 
+def test_set_uart_baudrate_frame_matches_the_captured_reference() -> None:
+    assert build_frame(0x1C, b"\x02") == bytes.fromhex("A55A00091C02170D0A")
+
+
+def test_get_uart_baudrate_frame_matches_the_captured_reference() -> None:
+    assert build_frame(0x1E) == bytes.fromhex("A55A00081E160D0A")
+
+
 def test_read_tag_frame_matches_the_protocol_reference() -> None:
     payload = bytes.fromhex("0000000001000000000300020002")
     assert build_frame(0x84, payload) == bytes.fromhex(

@@ -82,6 +82,19 @@ class ProtocolType(IntEnum):
     GJB_7377_1 = 0x02
 
 
+class UartBaudRate(IntEnum):
+    """UART baud rate code, payload byte of commands 0x1C and 0x1E.
+
+    The reader answers with the pending code but keeps talking at the
+    current rate until the next power cycle, and the setting persists
+    across power loss. Codes 0x02 and 0x03 are verified on UR4
+    firmware 7.40.1, the vendor SDKs reject every other code.
+    """
+
+    BAUD_115200 = 0x02
+    BAUD_460800 = 0x03
+
+
 class RfLink(IntEnum):
     """Recommended RF link combination, set with command 0x52.
 
