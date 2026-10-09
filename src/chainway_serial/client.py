@@ -263,6 +263,7 @@ class ChainwayClient:
         self._link_reported = False
         self._link_lost_error: Exception | None = None
         self._quiet_until = 0.0
+        self._discarding_tags = False
 
     @property
     def connected(self) -> bool:
@@ -278,7 +279,11 @@ class ChainwayClient:
         """Open the link and start the keepalive loop.
 
         A no-op when already open, reusable after
-        :meth:`disconnect`.
+        :meth:`disconnect`. The reader keeps scanning when a link
+        closes during a continuous inventory, so this method sends stop
+        inventory first and drops the tag records that arrive before
+        the answer. A reader that does not answer, for example while it
+        boots, delays the return by the response timeout.
 
         Raises:
             ChainwayConnectionError: The URL could not be opened.
@@ -288,6 +293,7 @@ class ChainwayClient:
                 return
             protocol = ChainwayProtocol(self._handle_frame, self._schedule_drop_link)
             loop = asyncio.get_running_loop()
+            self._discarding_tags = True
             try:
                 transport, _ = await serialx.create_serial_connection(
                     loop,
@@ -300,14 +306,24 @@ class ChainwayClient:
                     rtscts=self._rtscts,
                 )
             except (serialx.SerialException, OSError) as err:
+                self._discarding_tags = False
                 msg = f"could not open {self.url}: {err}"
                 raise ChainwayConnectionError(msg) from err
             self._transport = transport
             self._protocol = protocol
             self._link_reported = False
             self._link_lost_error = None
+            await self._stop_leftover_scan()
             self._last_keepalive = time.monotonic()
             self._maintenance_task = asyncio.create_task(self._maintenance_loop())
+
+    async def _stop_leftover_scan(self) -> None:
+        try:
+            async with self._lock:
+                with suppress(ChainwayTimeoutError):
+                    await self._exchange(Command.STOP_INVENTORY, b"")
+        finally:
+            self._discarding_tags = False
 
     async def disconnect(self) -> None:
         """Close the link and stop the keepalive loop.
@@ -2049,6 +2065,9 @@ class ChainwayClient:
         _LOGGER.debug("dropping unexpected frame with command %#04x", command)
 
     def _deliver_tag(self, payload: bytes) -> None:
+        if self._discarding_tags:
+            _LOGGER.debug("dropping a tag record from a scan started before this connection")
+            return
         try:
             tag = parse_tag_record(
                 payload,

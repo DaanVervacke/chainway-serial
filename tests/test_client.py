@@ -894,7 +894,7 @@ async def test_stop_inventory_is_a_noop_when_idle(
 ) -> None:
     logic, _ = reader_server
     await client.stop_inventory()
-    assert Command.STOP_INVENTORY not in commands_seen(logic)
+    assert commands_seen(logic) == [Command.STOP_INVENTORY]
 
 
 async def test_inventory_phase_mode_reports_the_phase(

@@ -501,3 +501,42 @@ async def test_failing_sync_on_tag_callback_is_contained(
         assert await client.get_version() == FirmwareVersion(1, 2, 3)
     finally:
         await client.disconnect()
+
+
+@pytest.mark.usefixtures("client")
+async def test_connect_stops_a_leftover_scan_first(
+    reader_server: tuple[FakeReaderLogic, int],
+) -> None:
+    logic, _ = reader_server
+    assert logic.received[0] == (Command.STOP_INVENTORY, b"")
+
+
+async def test_connect_drops_records_of_a_leftover_scan(
+    reader_server: tuple[FakeReaderLogic, int],
+) -> None:
+    logic, port = reader_server
+    record = b"\x30\x00" + bytes(range(1, 13)) + b"\xfe\xd6\x00"
+    logic.junk_on_connect = build_frame(0x83, record) * 3
+    seen: list[object] = []
+    client = ChainwayClient(f"socket://127.0.0.1:{port}", on_tag=seen.append)
+    await client.connect()
+    try:
+        await asyncio.sleep(0.05)
+        assert seen == []
+        assert await client.get_version() == FirmwareVersion(1, 2, 3)
+    finally:
+        await client.disconnect()
+
+
+async def test_connect_survives_a_reader_that_ignores_stop(
+    reader_server: tuple[FakeReaderLogic, int],
+) -> None:
+    logic, port = reader_server
+    logic.silent_commands = {Command.STOP_INVENTORY}
+    client = ChainwayClient(f"socket://127.0.0.1:{port}", response_timeout=0.1)
+    await client.connect()
+    try:
+        assert client.connected
+        assert await client.get_version() == FirmwareVersion(1, 2, 3)
+    finally:
+        await client.disconnect()
