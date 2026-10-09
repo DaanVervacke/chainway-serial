@@ -6,7 +6,7 @@ behavior is documented in docs/protocol.md under live verification.
 """
 
 import asyncio
-from contextlib import suppress
+from contextlib import aclosing, suppress
 
 import pytest
 
@@ -25,7 +25,6 @@ from chainway_serial import (
 )
 from chainway_serial.models import OutputRoute, TriggerInput
 
-FACTORY_RESTORE_SETTLE_SECONDS = 4.0
 PARTIAL_FRAME = b"\xa5\x5a\x00\xff\x02\xff\x0d\x0a"
 
 
@@ -175,10 +174,11 @@ async def test_iterator_cancellation_stops_the_scan(client: ChainwayClient) -> N
     tags: list[object] = []
 
     async def drain() -> None:
-        async for tag in client.inventory():
-            tags.append(tag)
-            if len(tags) >= 3:
-                break
+        async with aclosing(client.inventory()) as stream:
+            async for tag in stream:
+                tags.append(tag)
+                if len(tags) >= 3:
+                    break
 
     with suppress(TimeoutError):
         await asyncio.wait_for(drain(), timeout=8.0)
@@ -230,7 +230,6 @@ async def test_software_reset_then_factory_restore(client: ChainwayClient) -> No
             continue
 
     await client.restore_factory_settings()
-    await asyncio.sleep(FACTORY_RESTORE_SETTLE_SECONDS)
     assert await client.get_version() is not None
     assert (await client.get_inventory_mode()).mode is InventoryMode.EPC
     assert await client.get_antenna_mask() == 1

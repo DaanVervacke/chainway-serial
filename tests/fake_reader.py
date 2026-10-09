@@ -37,6 +37,7 @@ class FakeReaderLogic:
         self.failing_tag_commands: set[int] = set()
         self.junk_on_connect = b""
         self.commit_mute = 0.0
+        self.restore_mute = 0.0
         self.tag_error_payload = b"\x00\x01"
         self.dropped: list[tuple[int, bytes]] = []
         self._muted_until = 0.0
@@ -235,6 +236,8 @@ class FakeReaderLogic:
             and payload[0] in CONFIG_COMMITTING_SUBCOMMANDS
         ):
             return self.commit_mute
+        if command == Command.RESTORE_FACTORY_SETTINGS:
+            return self.restore_mute
         return 0.0
 
     def _extract_frame(self) -> tuple[int, bytes] | None:

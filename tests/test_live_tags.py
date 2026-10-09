@@ -12,6 +12,7 @@ import pytest
 from chainway_serial import (
     ChainwayClient,
     ChainwayResponseError,
+    ChainwayTimeoutError,
     ChainwayUnsupportedCommandError,
     LockBank,
     LockMode,
@@ -204,3 +205,28 @@ async def test_bare_zero_reply_raises_unsupported(
     logic._responders[command] = lambda _payload: b"\x00"
     with pytest.raises(ChainwayUnsupportedCommandError, match=f"{command:#04x}"):
         await call(client)
+
+
+async def test_restore_waits_out_the_module_mute(
+    client: ChainwayClient,
+    reader_server: tuple[FakeReaderLogic, int],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    logic, _ = reader_server
+    logic.restore_mute = 0.2
+    monkeypatch.setattr("chainway_serial.client.RESTORE_COMMIT_DELAY", 0.3)
+    await client.restore_factory_settings()
+    assert await client.get_version() is not None
+    assert logic.dropped == []
+
+
+async def test_without_the_restore_delay_the_module_drops_the_next_request(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    logic.restore_mute = 0.3
+    client.response_timeout = 0.1
+    await client.restore_factory_settings()
+    with pytest.raises(ChainwayTimeoutError):
+        await client.get_version()
+    assert logic.dropped == [(Command.GET_VERSION, b"")]

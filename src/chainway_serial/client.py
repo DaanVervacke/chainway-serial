@@ -37,6 +37,7 @@ from .const import (
     MIN_POWER_DBM,
     MODULE_WORK_TIME_BYTES,
     MODULE_WORK_TIME_MAX,
+    RESTORE_COMMIT_DELAY,
     SINGLE_INVENTORY_PAYLOAD,
     START_INVENTORY_FREQUENCY_PAYLOAD,
     START_INVENTORY_PAYLOAD,
@@ -847,9 +848,12 @@ class ChainwayClient:
 
         The reader and destination network addresses on the mainboard
         stay as they are. The SDKs call the same opcode the soft reset.
+        The module drops every request for about 1.5 seconds after the
+        acknowledgement, so the next command waits that long.
         """
         response = await self._request(Command.RESTORE_FACTORY_SETTINGS)
         _require_ack(response, Command.RESTORE_FACTORY_SETTINGS)
+        self._quiet_until = time.monotonic() + RESTORE_COMMIT_DELAY
 
     async def single_inventory(self) -> Tag | None:
         """Inventory once and return the tag, or None without a tag."""
