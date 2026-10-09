@@ -27,9 +27,11 @@ Before 1.0, breaking changes ship as minor bumps.
 
 - Export SensorSubcommand
 - Add UART baud rate get and set commands
+- Replace get_gpo with get_gpi
 
 ### Maintenance
 
+- Update the changelog
 - Update the changelog
 
 ## [0.2.0] - 2026-10-04
