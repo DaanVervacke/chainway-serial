@@ -1,7 +1,7 @@
 """Live tag operations against real hardware with tags on the antenna.
 
-Run with ``CHAINWAY_URL=/dev/cu.PL2303G-USBtoUART1110 uv run pytest
-hardware/test_tags.py``. Place at least one Gen2 tag with a 32-bit USER
+Run with ``CHAINWAY_URL=/dev/ttyUSB0 uv run pytest
+tests/hardware/test_tags.py``. Place at least one Gen2 tag with a 32-bit USER
 bank, such as an Impinj Monza R6-P, on the antenna. Every test restores
 what it changes: reader settings are written without the save flag, and
 tag memory, locks and passwords return to their values from before the
