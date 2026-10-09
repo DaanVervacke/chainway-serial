@@ -18,7 +18,7 @@ mypy src tests scripts
 coverage run -m pytest
 coverage report
 uv build
-uv audit
+uv audit --locked --preview-features audit-command
 ```
 
 Coverage measures branches in `src/` and requires `fail_under = 98`. `uv audit` needs network access.

@@ -861,7 +861,9 @@ class ChainwayClient:
 
         The UR4 mainboard acknowledges and then reboots the whole
         reader, which prints its boot console on the serial port.
-        Commands sent during the reboot, about two seconds, time out.
+        Over serial, commands sent during the reboot, about two
+        seconds, time out. Over TCP the socket stays silent and a new
+        connection works again after 11 to 31 seconds.
         """
         response = await self._request(Command.SOFTWARE_RESET)
         _require_ack(response, Command.SOFTWARE_RESET)

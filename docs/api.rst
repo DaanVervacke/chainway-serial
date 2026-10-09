@@ -78,6 +78,8 @@ Enums
    :members:
 .. autoclass:: chainway_serial.SensorSubcommand
    :members:
+.. autoclass:: chainway_serial.UartBaudRate
+   :members:
 
 Exceptions
 ----------

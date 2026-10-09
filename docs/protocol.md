@@ -84,7 +84,7 @@ Receiver state machine, as implemented by the SDKs: hunt for `A5`, expect `5A`, 
 
 Client-side policy from the SDK connection managers. Firmware 7.40.1 enforces none of it: after 60 seconds without traffic it answers normally.
 
-The Android SDK connection managers send a heartbeat only after 5 seconds of inbound silence, at most every 3 seconds, and suspend the dead-link check while an inventory runs. Idle they send a get-version frame, during inventory a single `00` byte, and 20 seconds of inbound silence on an idle link marks it dead. The Java jar sends get-version every 2 seconds, uses a 10 second dead link, and never drops the link during inventory. This library implements a fixed `keepalive_interval` of 5 seconds, the 20 second Android dead-link value, and suspends the dead-link check while an inventory runs. All three intervals are client parameters. The bare `00` byte is not a valid frame, the parser must tolerate it.
+The Android SDK connection managers send a heartbeat only after 5 seconds of inbound silence, at most every 3 seconds, and suspend the dead-link check while an inventory runs. Idle they send a get-version frame, during inventory a single `00` byte, and 20 seconds of inbound silence on an idle link marks it dead. The Java jar sends get-version every 2 seconds, uses a 10 second dead link, and never drops the link during inventory. This library implements a fixed `keepalive_interval` of 5 seconds, the 20 second Android dead-link value, and suspends the dead-link check while an inventory runs. The idle and inventory keepalives share `keepalive_interval`, and `dead_link_timeout` sets the dead-link value. Both are client parameters. The bare `00` byte is not a valid frame, the parser must tolerate it.
 
 ## Command reference
 

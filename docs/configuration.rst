@@ -52,8 +52,9 @@ Resets
    await client.software_reset()
    await client.restore_factory_settings()
 
-``software_reset`` reboots the reader, which takes about two seconds.
-``restore_factory_settings`` resets the RF settings, and also turns the
+``software_reset`` reboots the reader. Over serial that takes about two
+seconds. Over TCP the socket stays silent and a new connection works
+again after 11 to 31 seconds. ``restore_factory_settings`` resets the RF settings, and also turns the
 buzzer back on and returns the trigger parameters and the work mode to
 their defaults. It also sets the reader address back to
 192.168.99.202, port 8888, right away. Over TCP on any other address

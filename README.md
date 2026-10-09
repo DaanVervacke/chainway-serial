@@ -10,7 +10,7 @@ Unofficial asynchronous Python library to interact with Chainway UR4 fixed UHF R
 > Unofficial and reverse-engineered: not endorsed by Chainway, and it may
 > break without notice whenever Chainway changes their firmware.
 
-The library has been tested with a UR4 running UHF module firmware 7.40.1 over RS-232.
+The library has been tested with a UR4 running UHF module firmware 7.40.1 over RS-232 and TCP.
 
 ## Install
 
