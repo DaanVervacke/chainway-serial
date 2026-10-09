@@ -4,7 +4,9 @@ import asyncio
 import inspect
 import socket
 
-from chainway_serial import DiscoveredReader, discover_readers
+import pytest
+
+from chainway_serial import ChainwayConnectionError, DiscoveredReader, discover_readers
 from chainway_serial.discovery import _DiscoveryProtocol
 
 
@@ -40,6 +42,30 @@ async def test_discover_readers_accepts_padded_packets() -> None:
     sender.close()
     readers = await task
     assert readers == [DiscoveredReader(mac="aa:bb:cc:dd:ee:ff", ip="192.168.99.200", port=8888)]
+
+
+async def test_discover_readers_sorts_by_numeric_address() -> None:
+    port = free_udp_port()
+    task = asyncio.create_task(discover_readers(listen_seconds=0.3, port=port))
+    await asyncio.sleep(0.05)
+    sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    for last_octet in (10, 9):
+        packet = bytes((0, 0, 0, 0, 0, last_octet)) + bytes((192, 168, 1, last_octet)) + b"\x22\xb8"
+        sender.sendto(packet, ("127.0.0.1", port))
+    sender.close()
+    readers = await task
+    assert [reader.ip for reader in readers] == ["192.168.1.9", "192.168.1.10"]
+
+
+async def test_discover_readers_wraps_a_busy_port() -> None:
+    holder = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    holder.bind(("0.0.0.0", 0))  # noqa: S104
+    port = int(holder.getsockname()[1])
+    try:
+        with pytest.raises(ChainwayConnectionError, match=f"UDP port {port}"):
+            await discover_readers(listen_seconds=0.05, port=port)
+    finally:
+        holder.close()
 
 
 async def test_discover_readers_returns_empty_without_broadcasts() -> None:

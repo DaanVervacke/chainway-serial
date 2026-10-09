@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 
 from .const import DISCOVERY_LISTEN_SECONDS, DISCOVERY_PACKET_SIZE, UDP_DISCOVERY_PORT
+from .exceptions import ChainwayConnectionError
 from .models import DiscoveredReader
 
 _LOGGER = logging.getLogger(__name__)
@@ -55,15 +57,25 @@ async def discover_readers(
 
     Returns:
         Every reader that announced itself, sorted by IP and port.
+
+    Raises:
+        ChainwayConnectionError: The discovery port could not be
+            opened, for example because another process holds it.
     """
     loop = asyncio.get_running_loop()
     readers: dict[tuple[str, str, int], DiscoveredReader] = {}
-    transport, _ = await loop.create_datagram_endpoint(
-        lambda: _DiscoveryProtocol(readers),
-        local_addr=("0.0.0.0", port),  # noqa: S104
-    )
+    try:
+        transport, _ = await loop.create_datagram_endpoint(
+            lambda: _DiscoveryProtocol(readers),
+            local_addr=("0.0.0.0", port),  # noqa: S104
+        )
+    except OSError as err:
+        msg = f"could not listen on UDP port {port}: {err}"
+        raise ChainwayConnectionError(msg) from err
     try:
         await asyncio.sleep(listen_seconds)
     finally:
         transport.close()
-    return sorted(readers.values(), key=lambda reader: (reader.ip, reader.port))
+    return sorted(
+        readers.values(), key=lambda reader: (ipaddress.IPv4Address(reader.ip), reader.port)
+    )
