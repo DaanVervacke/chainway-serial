@@ -819,9 +819,14 @@ class ChainwayClient:
     ) -> None:
         """Set the work time of one antenna.
 
+        UHF module firmware 7.40.1 rejects the stored form, so pass
+        ``save=False`` on a UR4.
+
         Raises:
             ValueError: The antenna number or the work time is out of
                 range.
+            ChainwayResponseError: The reader did not acknowledge the
+                write.
         """
         if not MIN_ANTENNA <= antenna <= MAX_ANTENNA:
             msg = f"antenna must be between {MIN_ANTENNA} and {MAX_ANTENNA}, got {antenna}"

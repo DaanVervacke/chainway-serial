@@ -81,8 +81,12 @@ The enable mask is 16 bits, bit 0 is antenna 1:
 
    await client.set_antenna_mask(0b101, save=True)
    mask = await client.get_antenna_mask()
-   await client.set_antenna_work_time(antenna=1, work_time=200)
+   await client.set_antenna_work_time(antenna=1, work_time=200, save=False)
    state = await client.get_antenna_connection_state()
+
+A UR4 with UHF module firmware 7.40.1 rejects the antenna work time
+with ``save=True`` and raises
+:class:`chainway_serial.ChainwayResponseError`. The volatile form works.
 
 Work modes
 ----------
