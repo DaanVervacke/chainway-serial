@@ -56,6 +56,27 @@ def test_reader_address_rejects_a_bad_ip() -> None:
         ReaderAddress(ip="192.168.99", port=8888)
 
 
+@pytest.mark.parametrize(
+    ("subnet_mask", "gateway", "match"),
+    [
+        ("255.255.0", "10.0.0.1", "subnet_mask must be a dotted quad"),
+        ("255.255.255.0", "10.0.0.256", "gateway must be a dotted quad"),
+        ("255.255.255.0", None, "set together"),
+        (None, "10.0.0.1", "set together"),
+    ],
+)
+def test_reader_address_rejects_a_bad_mask_or_gateway(
+    subnet_mask: str | None, gateway: str | None, match: str
+) -> None:
+    with pytest.raises(ValueError, match=match):
+        ReaderAddress(ip="10.0.0.5", port=8888, subnet_mask=subnet_mask, gateway=gateway)
+
+
+def test_reader_address_rejects_non_ascii_digits() -> None:
+    with pytest.raises(ValueError, match="ip must be a dotted quad"):
+        ReaderAddress(ip="10.0.0.\u00b2", port=8888)
+
+
 def test_reader_address_rejects_a_bad_port() -> None:
     with pytest.raises(ValueError, match="port"):
         ReaderAddress(ip="192.168.99.200", port=0)

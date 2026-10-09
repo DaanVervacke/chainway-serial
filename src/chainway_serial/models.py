@@ -16,6 +16,15 @@ def _require_range(name: str, value: int, low: int, high: int) -> None:
         raise ValueError(msg)
 
 
+def _require_dotted_quad(name: str, value: str) -> None:
+    parts = value.split(".")
+    if len(parts) != IPV4_OCTETS or any(
+        not (part.isascii() and part.isdigit()) or not 0 <= int(part) <= BYTE_MAX for part in parts
+    ):
+        msg = f"{name} must be a dotted quad, got {value}"
+        raise ValueError(msg)
+
+
 class InventoryMode(IntEnum):
     """Data blocks a tag sighting carries, set with command 0x70."""
 
@@ -314,14 +323,20 @@ class ReaderAddress:
     gateway: str | None = None
 
     def __post_init__(self) -> None:
-        """Validate the IPv4 address and the port."""
-        parts = self.ip.split(".")
-        if len(parts) != IPV4_OCTETS or any(
-            not part.isdigit() or not 0 <= int(part) <= BYTE_MAX for part in parts
-        ):
-            msg = f"ip must be a dotted quad, got {self.ip}"
-            raise ValueError(msg)
+        """Validate the addresses and the port.
+
+        The subnet mask and the gateway travel together on the wire, so
+        both are set or both are None.
+        """
+        _require_dotted_quad("ip", self.ip)
         _require_range("port", self.port, 1, 65535)
+        if (self.subnet_mask is None) != (self.gateway is None):
+            msg = "subnet_mask and gateway must be set together"
+            raise ValueError(msg)
+        if self.subnet_mask is not None:
+            _require_dotted_quad("subnet_mask", self.subnet_mask)
+        if self.gateway is not None:
+            _require_dotted_quad("gateway", self.gateway)
 
 
 @dataclass(frozen=True, slots=True)
