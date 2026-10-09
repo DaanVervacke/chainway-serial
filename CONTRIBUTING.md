@@ -66,7 +66,7 @@ The decompiled vendor SDKs were the first protocol source. Since October 2026 on
 
 - Pytest uses `asyncio_mode = auto`. Warnings are errors.
 - Ruff uses `select = ["ALL"]` with the documented ignore list in `pyproject.toml`. mypy runs in strict mode.
-- Do not add narrative code comments. Docstrings document the public API.
+- Do not add code comments of any kind in any language. Only pragmas (`# noqa`, `# type: ignore`) and shebangs are allowed. Python docstrings document the public API.
 - Never log passwords or reader credentials.
 - Run a text-quality pass over all user-facing text before committing: README, CHANGELOG entries, docstrings, and error messages. No em dashes, no semicolon-joined clauses, no filler transitions.
 - Do not mention AI, agents, or tooling in commit messages.
