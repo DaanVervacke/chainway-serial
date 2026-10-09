@@ -230,6 +230,8 @@ class ChainwayClient:
         self._maintenance_task: asyncio.Task[None] | None = None
         self._callback_tasks: set[asyncio.Task[None]] = set()
         self._last_keepalive = 0.0
+        self._link_reported = False
+        self._link_lost_error: Exception | None = None
 
     @property
     def connected(self) -> bool:
@@ -271,6 +273,8 @@ class ChainwayClient:
                 raise ChainwayConnectionError(msg) from err
             self._transport = transport
             self._protocol = protocol
+            self._link_reported = False
+            self._link_lost_error = None
             self._last_keepalive = time.monotonic()
             self._maintenance_task = asyncio.create_task(self._maintenance_loop())
 
@@ -281,8 +285,28 @@ class ChainwayClient:
         :class:`chainway_serial.ChainwayConnectionError`. A no-op when
         already closed.
         """
+        self._link_reported = True
+        self._link_lost_error = None
+        transport = await self._shutdown()
+        await self._release(transport)
+
+    async def _shutdown(self) -> BaseSerialTransport | None:
+        """Tear the link state down under the lifecycle lock.
+
+        Returns the transport for the caller to close outside the
+        lock, because ``wait_closed`` can block and must never hold
+        the lock.
+        """
         async with self._lifecycle_lock:
-            await self._teardown()
+            return await self._teardown()
+
+    async def _release(self, transport: BaseSerialTransport | None) -> None:
+        if transport is None:
+            return
+        transport.close()
+        with suppress(Exception):
+            async with asyncio.timeout(1.0):
+                await transport.wait_closed()
 
     async def __aenter__(self) -> Self:
         """Open the link and return the client."""
@@ -1929,23 +1953,28 @@ class ChainwayClient:
         task.add_done_callback(_consume_task_exception)
 
     async def _drop_link(self, exc: Exception | None) -> None:
-        async with self._lifecycle_lock:
-            if self._transport is None:
-                return
-            await self._teardown()
-        error = (
-            exc if exc is not None else ChainwayConnectionError("the link was closed by the reader")
-        )
-        callback = self.on_connection_lost
-        if callback is not None:
-            self._run_callback(callback, error)
+        if self._link_lost_error is None:
+            self._link_lost_error = (
+                exc
+                if exc is not None
+                else ChainwayConnectionError("the link was closed by the reader")
+            )
+        transport = await self._shutdown()
+        await self._release(transport)
+        if not self._link_reported:
+            self._link_reported = True
+            error = self._link_lost_error
+            self._link_lost_error = None
+            callback = self.on_connection_lost
+            if callback is not None and error is not None:
+                self._run_callback(callback, error)
 
     def _finish_inventory(self) -> None:
         self._inventory_active = False
         self._inventory_phase = False
         self._inventory_frequency = False
 
-    async def _teardown(self) -> None:
+    async def _teardown(self) -> BaseSerialTransport | None:
         current = asyncio.current_task()
         if self._maintenance_task is not None and self._maintenance_task is not current:
             self._maintenance_task.cancel()
@@ -1964,10 +1993,7 @@ class ChainwayClient:
             pending[1].set_exception(error)
         if queue is not None:
             queue.put_nowait(_LinkClosed(error))
-        if transport is not None:
-            transport.close()
-            with suppress(Exception):
-                await transport.wait_closed()
+        return transport
 
     async def _maintenance_loop(self) -> None:
         while True:

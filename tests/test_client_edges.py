@@ -1,6 +1,7 @@
 """Edge case tests that close the defensive branches of the client."""
 
 import asyncio
+from collections.abc import Callable
 
 import pytest
 
@@ -23,6 +24,54 @@ from .fake_reader import FakeReaderLogic
 
 async def _anext(stream: object) -> object:
     return await stream.__anext__()  # type: ignore[attr-defined]
+
+
+async def test_dead_link_fires_the_callback_exactly_once(
+    make_client: Callable[..., ChainwayClient],
+) -> None:
+    lost: list[Exception] = []
+    client = make_client(dead_link_timeout=0.2)
+    client.on_connection_lost = lost.append
+    await client.connect()
+    for _ in range(100):
+        await asyncio.sleep(0.02)
+        if lost:
+            break
+    assert lost
+    client._schedule_drop_link(ChainwayConnectionError("race"))
+    await asyncio.sleep(0.1)
+    assert len(lost) == 1
+    await client.disconnect()
+    assert len(lost) == 1
+
+
+async def test_explicit_disconnect_swallows_late_drop_callbacks(
+    make_client: Callable[..., ChainwayClient],
+) -> None:
+    lost: list[Exception] = []
+    client = make_client(dead_link_timeout=60.0)
+    client.on_connection_lost = lost.append
+    await client.connect()
+    await client.disconnect()
+    client._schedule_drop_link(ChainwayConnectionError("late"))
+    await asyncio.sleep(0.05)
+    assert lost == []
+
+
+async def test_reader_side_close_fires_the_callback_once(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    lost: list[Exception] = []
+    client.on_connection_lost = lost.append
+    assert logic.close_transport is not None
+    logic.close_transport()
+    for _ in range(100):
+        await asyncio.sleep(0.02)
+        if lost:
+            break
+    assert len(lost) == 1
+    assert not client.connected
 
 
 async def test_failing_volume_ack_raises(
