@@ -1,6 +1,11 @@
 Configuration
 =============
 
+Every setting that carries a ``save`` flag stores the value across a
+power cycle by default. Pass ``save=False`` to keep it until power off.
+The antenna work time is the exception on a UR4, it only accepts
+``save=False``.
+
 RF power
 --------
 
@@ -38,11 +43,8 @@ Protocol type
    print(await client.get_protocol_type())
 
 A UR4 reports ``ProtocolType.ISO_18000_6C`` and rejects
-``set_protocol_type`` with :class:`chainway_serial.ChainwayResponseError`.
-
-Power and every setting that carries a ``save`` flag store the value
-across a power cycle by default. Pass ``save=False`` to keep it until
-power off.
+``set_protocol_type`` with
+:class:`chainway_serial.ChainwayUnsupportedCommandError`.
 
 Resets
 ------
@@ -85,8 +87,9 @@ The enable mask is 16 bits, bit 0 is antenna 1:
    state = await client.get_antenna_connection_state()
 
 A UR4 with UHF module firmware 7.40.1 rejects the antenna work time
-with ``save=True`` and raises
-:class:`chainway_serial.ChainwayResponseError`. The volatile form works.
+with the default ``save=True`` and raises
+:class:`chainway_serial.ChainwayUnsupportedCommandError`. The volatile
+form works. The work time takes antennas 1 to 15.
 
 Work modes
 ----------
