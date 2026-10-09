@@ -17,6 +17,7 @@ Before 1.0, breaking changes ship as minor bumps.
 - Raise a response error for an unsupported pending baud code
 - Keep the probe script running when a read fails
 - Wait out the module mute after a factory restore
+- Stop a leftover scan when connecting
 
 ### Documentation
 
@@ -30,6 +31,7 @@ Before 1.0, breaking changes ship as minor bumps.
 - Update the readme with the live verification status
 - Replace stale unverified notes with live findings
 - Record the live tag session findings
+- Record that a closed link leaves the scan running
 
 ### Features
 
@@ -45,6 +47,7 @@ Before 1.0, breaking changes ship as minor bumps.
 - Update the changelog
 - Update the changelog
 - Add UR4 mainboard firmware dumps
+- Update the changelog
 - Update the changelog
 
 ## [0.2.0] - 2026-10-04
