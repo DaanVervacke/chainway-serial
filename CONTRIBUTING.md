@@ -14,7 +14,7 @@ uv run python -m scripts.check
 ```text
 ruff format --check .
 ruff check .
-mypy src tests scripts hardware
+mypy src tests scripts
 coverage run -m pytest
 coverage report
 uv build
@@ -25,7 +25,21 @@ Coverage measures branches in `src/` and requires `fail_under = 98`. `uv audit` 
 
 ## Live hardware tests
 
-`hardware/` holds a pytest suite against a real reader, outside the default `testpaths` so the gate never touches hardware. Run it with `CHAINWAY_URL=/dev/tty.PL2303G-USBtoUART110 uv run pytest hardware`. Without the variable every test skips. The suite changes reader settings and ends with a factory restore, so a full run leaves the unit at factory defaults.
+`tests/hardware/` runs against a real reader. Without `CHAINWAY_URL` pytest skips the folder, so the gate never touches hardware.
+
+```bash
+CHAINWAY_URL=/dev/ttyUSB0 uv run pytest tests/hardware
+```
+
+`test_live.py` changes reader settings, restores them and ends with a factory restore that keeps the buzzer setting. `test_tags.py` needs at least one Gen2 tag with a 32-bit USER bank on the antenna, such as an Impinj Monza R6-P. It restores every tag write and never kills, permalocks or deactivates a tag.
+
+`scripts/probe_chainway.py` sends every read command and a three second inventory, and writes the answers to `captures/probe.json`. Without a URL it lists the readers UDP discovery finds.
+
+```bash
+uv run python -m scripts.probe_chainway /dev/ttyUSB0
+```
+
+`docs/protocol.md` records what the hardware confirmed, which commands the UR4 does not support, and the open items.
 
 ## Adding a command
 
