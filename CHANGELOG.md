@@ -72,6 +72,8 @@ Before 1.0, breaking changes ship as minor bumps.
 - Update the changelog
 - Update the changelog
 - Update the changelog
+- Update the changelog
+- Bump release-drafter to 7.9.0
 
 ## [0.2.0] - 2026-10-04
 
