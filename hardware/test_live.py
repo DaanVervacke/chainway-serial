@@ -1,7 +1,8 @@
 """Live verification of the ChainwayClient against real hardware.
 
 The tests run in file order and finish with a factory restore, so a
-full run leaves the reader in its baseline state. Expected wire
+full run leaves the reader in its baseline state. The buzzer setting
+from before the run is written back after the restore. Expected wire
 behavior is documented in docs/protocol.md under live verification.
 """
 
@@ -229,8 +230,12 @@ async def test_software_reset_then_factory_restore(client: ChainwayClient) -> No
         except ChainwayTimeoutError:
             continue
 
+    buzzer = await client.get_buzzer()
     await client.restore_factory_settings()
     assert await client.get_version() is not None
+    assert await client.get_buzzer() is True
+    await client.set_buzzer(enabled=buzzer)
+    assert await client.get_buzzer() is buzzer
     assert (await client.get_inventory_mode()).mode is InventoryMode.EPC
     assert await client.get_antenna_mask() == 1
     assert (await client.get_rf_power())[0].read_power_dbm == 30.0

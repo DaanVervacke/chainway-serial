@@ -4,8 +4,9 @@ Run with ``CHAINWAY_URL=/dev/tty.PL2303G-USBtoUART110 uv run pytest hardware``.
 Without CHAINWAY_URL every test skips. The suite talks to a real
 reader: it changes settings and restores them, and one test drops the
 link on purpose by shortening the dead-link timeout. The final test
-runs a factory restore, so a full run leaves the reader at factory
-defaults and wipes any settings stored on it before the run.
+runs a factory restore and then writes the buzzer setting back, so a
+full run leaves the reader at factory defaults with the buzzer as it
+was, and wipes any other settings stored on it before the run.
 """
 
 import os
