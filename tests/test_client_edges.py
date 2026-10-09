@@ -91,6 +91,23 @@ async def test_dead_link_fires_the_callback_exactly_once(
     assert len(lost) == 1
 
 
+async def test_os_level_link_failure_reaches_the_callback_as_a_chainway_error(
+    client: ChainwayClient,
+) -> None:
+    lost: list[Exception] = []
+    client.on_connection_lost = lost.append
+    cause = OSError(6, "Device not configured")
+    client._schedule_drop_link(cause)
+    for _ in range(100):
+        await asyncio.sleep(0.02)
+        if lost:
+            break
+    assert len(lost) == 1
+    assert isinstance(lost[0], ChainwayConnectionError)
+    assert lost[0].__cause__ is cause
+    assert "Device not configured" in str(lost[0])
+
+
 async def test_explicit_disconnect_swallows_late_drop_callbacks(
     make_client: Callable[..., ChainwayClient],
 ) -> None:

@@ -151,6 +151,16 @@ def _consume_task_exception(task: asyncio.Task[None]) -> None:
         _LOGGER.debug("callback task failed: %s", task.exception())
 
 
+def _link_error(exc: Exception | None) -> ChainwayError:
+    if exc is None:
+        return ChainwayConnectionError("the link was closed by the reader")
+    if isinstance(exc, ChainwayError):
+        return exc
+    error = ChainwayConnectionError(f"the link failed: {exc}")
+    error.__cause__ = exc
+    return error
+
+
 def _require_ack(payload: bytes, command: Command) -> None:
     if not payload or payload[0] != STATUS_OK:
         msg = f"command {command:#04x} was not acknowledged, got payload {payload!r}"
@@ -1972,11 +1982,7 @@ class ChainwayClient:
 
     async def _drop_link(self, exc: Exception | None) -> None:
         if self._link_lost_error is None:
-            self._link_lost_error = (
-                exc
-                if exc is not None
-                else ChainwayConnectionError("the link was closed by the reader")
-            )
+            self._link_lost_error = _link_error(exc)
         transport = await self._shutdown()
         await self._release(transport)
         if not self._link_reported:
