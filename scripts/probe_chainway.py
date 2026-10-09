@@ -7,7 +7,10 @@ import json
 import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
+from enum import Enum
+from functools import partial
 from pathlib import Path
+from typing import Any
 
 from chainway_serial import ChainwayClient, ChainwayError, InventoryMode, discover_readers
 from chainway_serial.models import Tag
@@ -35,57 +38,102 @@ async def capture(
         results[name] = f"error: {err}"
 
 
+async def _power(client: ChainwayClient) -> list[dict[str, object]]:
+    """Render the per-antenna power records."""
+    return [
+        {"antenna": record.antenna, "read": record.read_power_dbm, "write": record.write_power_dbm}
+        for record in await client.get_rf_power()
+    ]
+
+
+async def _return_loss(client: ChainwayClient) -> list[dict[str, object]]:
+    """Render the per-port return loss."""
+    return [{"port": loss.port, "loss_db": loss.loss_db} for loss in await client.get_return_loss()]
+
+
+async def _barcode(client: ChainwayClient) -> str | None:
+    """Render one barcode scan."""
+    scanned = await client.scan_barcode()
+    return scanned.hex() if scanned else None
+
+
+async def _collected_full(client: ChainwayClient) -> dict[str, object]:
+    """Render the collected tags with full records."""
+    collected = await client.read_collected_tags_full()
+    return {"index": collected.index, "tags": [serialize_tag(tag) for tag in collected.tags]}
+
+
+async def _text(read: Awaitable[object]) -> str:
+    """Render a version or similar value as text."""
+    return str(await read)
+
+
+async def _name(read: Awaitable[Enum]) -> str:
+    """Render an enum value by member name."""
+    return (await read).name
+
+
+async def _fields(read: Awaitable[Any]) -> dict[str, object]:
+    """Render a dataclass value as a dictionary."""
+    return asdict(await read)
+
+
+async def _hex(read: Awaitable[bytes]) -> str:
+    """Render a byte value as hex."""
+    return (await read).hex()
+
+
+async def _connected(client: ChainwayClient) -> object:
+    """Render the antenna connection flags."""
+    return (await client.get_antenna_connection_state()).connected
+
+
+READS: tuple[tuple[str, Callable[[ChainwayClient], Awaitable[object]]], ...] = (
+    ("version", lambda c: _text(c.get_version())),
+    ("stm32_version", lambda c: _text(c.get_stm32_version())),
+    ("hardware_version", lambda c: _text(c.get_hardware_version())),
+    ("device_id", lambda c: _hex(c.get_device_id())),
+    ("temperature", lambda c: c.get_temperature()),
+    ("antenna_state", _connected),
+    ("battery", lambda c: c.get_battery_level()),
+    ("voltage", lambda c: c.verify_voltage()),
+    ("temperature_protect", lambda c: c.get_temperature_protect()),
+    ("module_work_time", lambda c: c.get_module_work_time()),
+    ("dual_single_mode", lambda c: c.get_dual_single_mode()),
+    ("module_parameter", lambda c: _hex(c.get_module_parameter(1, 1))),
+    ("power", _power),
+    ("region", lambda c: _name(c.get_region())),
+    ("fixed_frequency", lambda c: c.get_fixed_frequency()),
+    ("return_loss", _return_loss),
+    ("gen2", lambda c: _fields(c.get_gen2_parameters())),
+    ("rf_link", lambda c: _name(c.get_rf_link())),
+    ("uart_baudrate", lambda c: _name(c.get_uart_baudrate())),
+    ("fast_id", lambda c: c.get_fast_id()),
+    ("tag_focus", lambda c: c.get_tag_focus()),
+    ("inventory_mode", lambda c: _fields(c.get_inventory_mode())),
+    ("antenna_mask", lambda c: c.get_antenna_mask()),
+    ("work_mode", lambda c: _name(c.get_work_mode())),
+    ("buzzer", lambda c: c.get_buzzer()),
+    ("gpi", lambda c: _fields(c.get_gpi())),
+    ("trigger_config", lambda c: _fields(c.get_trigger_config())),
+    ("volume", lambda c: c.get_volume()),
+    ("reader_address", lambda c: _fields(c.get_reader_address())),
+    ("destination_address", lambda c: _fields(c.get_destination_address())),
+    ("collected_count", lambda c: c.get_collected_tag_count()),
+    ("barcode", _barcode),
+    ("collected_full", _collected_full),
+)
+
+
 async def probe_reader(client: ChainwayClient) -> dict[str, object]:
-    """Run every read command against the reader and collect the results."""
-    results: dict[str, object] = {}
-    results["url"] = client.url
-    results["version"] = str(await client.get_version())
-    results["stm32_version"] = str(await client.get_stm32_version())
-    results["hardware_version"] = str(await client.get_hardware_version())
-    results["device_id"] = (await client.get_device_id()).hex()
-    results["temperature"] = await client.get_temperature()
-    results["antenna_state"] = (await client.get_antenna_connection_state()).connected
-    results["battery"] = await client.get_battery_level()
-    await capture(results, "voltage", client.verify_voltage)
-    await capture(results, "temperature_protect", client.get_temperature_protect)
-    await capture(results, "module_work_time", client.get_module_work_time)
-    await capture(results, "dual_single_mode", client.get_dual_single_mode)
-    await capture(results, "module_parameter", lambda: client.get_module_parameter(1, 1))
-    results["power"] = [
-        {
-            "antenna": power.antenna,
-            "read": power.read_power_dbm,
-            "write": power.write_power_dbm,
-        }
-        for power in await client.get_rf_power()
-    ]
-    results["region"] = (await client.get_region()).name
-    results["fixed_frequency"] = await client.get_fixed_frequency()
-    results["return_loss"] = [
-        {"port": loss.port, "loss_db": loss.loss_db} for loss in await client.get_return_loss()
-    ]
-    results["gen2"] = asdict(await client.get_gen2_parameters())
-    results["rf_link"] = (await client.get_rf_link()).name
-    results["fast_id"] = await client.get_fast_id()
-    results["tag_focus"] = await client.get_tag_focus()
-    results["inventory_mode"] = asdict(await client.get_inventory_mode())
-    results["antenna_mask"] = await client.get_antenna_mask()
-    results["work_mode"] = (await client.get_work_mode()).name
-    results["buzzer"] = await client.get_buzzer()
-    results["gpi"] = asdict(await client.get_gpi())
-    results["trigger_config"] = asdict(await client.get_trigger_config())
-    results["volume"] = await client.get_volume()
-    results["reader_address"] = asdict(await client.get_reader_address())
-    results["destination_address"] = asdict(await client.get_destination_address())
-    results["collected_count"] = await client.get_collected_tag_count()
-    barcode = await client.scan_barcode()
-    results["barcode"] = barcode.hex() if barcode else None
+    """Run every read command against the reader and collect the results.
 
-    async def read_collected_full() -> dict[str, object]:
-        collected = await client.read_collected_tags_full()
-        return {"index": collected.index, "tags": [serialize_tag(tag) for tag in collected.tags]}
-
-    await capture(results, "collected_full", read_collected_full)
+    Each read is recorded on its own, so a command the reader rejects or
+    never answers is recorded as an error and the probe continues.
+    """
+    results: dict[str, object] = {"url": client.url}
+    for name, read in READS:
+        await capture(results, name, partial(read, client))
     return results
 
 
