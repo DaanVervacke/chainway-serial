@@ -56,7 +56,7 @@ Add all of the following:
 
 ## Captures and confidential data
 
-Raw probe output stays in `captures/`, which is git-ignored. Tag access passwords, kill passwords, and the addresses and captures of a live deployment are secrets. Redact them before sharing anything. The MAC address of the development unit and its factory or lab addresses may appear in the repository. The `.env` file is git-ignored for exactly this reason.
+Raw probe output stays in `captures/`, which is git-ignored. Tag access passwords, kill passwords, and the addresses and captures of a live deployment are secrets. Redact them before sharing anything. The `.env` file is git-ignored for this reason. The MAC address of the development unit and its factory or lab addresses may appear in the repository.
 
 ## Protocol ground truth
 
