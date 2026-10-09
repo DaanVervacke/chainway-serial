@@ -17,6 +17,7 @@ from chainway_serial import (
 )
 from chainway_serial.const import Command
 from chainway_serial.frames import build_frame
+from chainway_serial.protocol import ChainwayProtocol
 
 from .conftest import wait_for_server
 from .fake_reader import FakeReaderLogic
@@ -106,6 +107,113 @@ async def test_os_level_link_failure_reaches_the_callback_as_a_chainway_error(
     assert isinstance(lost[0], ChainwayConnectionError)
     assert lost[0].__cause__ is cause
     assert "Device not configured" in str(lost[0])
+
+
+def _reset_on_write(_data: bytes) -> None:
+    raise ConnectionResetError(54, "Connection reset by peer")
+
+
+async def test_failed_write_raises_a_connection_error_and_drops_the_link(
+    client: ChainwayClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lost: list[Exception] = []
+    client.on_connection_lost = lost.append
+    assert client._transport is not None
+    monkeypatch.setattr(client._transport, "write", _reset_on_write)
+    with pytest.raises(ChainwayConnectionError, match="Connection reset by peer") as caught:
+        await client.get_version()
+    assert isinstance(caught.value.__cause__, ConnectionResetError)
+    assert client._pending is None
+    for _ in range(100):
+        await asyncio.sleep(0.02)
+        if lost:
+            break
+    assert len(lost) == 1
+    assert not client.connected
+    assert await client.get_version() == FirmwareVersion(1, 2, 3)
+
+
+async def test_a_link_that_never_answered_is_reopened_once(
+    client: ChainwayClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lost: list[Exception] = []
+    client.on_connection_lost = lost.append
+    first = client._protocol
+    client._link_answered = False
+    assert client._transport is not None
+    monkeypatch.setattr(client._transport, "write", _reset_on_write)
+    assert await client.get_version() == FirmwareVersion(1, 2, 3)
+    assert client._protocol is not first
+    assert client._link_answered
+    assert len(lost) == 1
+    assert isinstance(lost[0], ChainwayConnectionError)
+
+
+async def test_the_reopen_is_tried_only_once(
+    client: ChainwayClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[Command] = []
+
+    async def always_lost(command: Command, _payload: bytes, **_kwargs: bool) -> bytes:
+        calls.append(command)
+        client._link_answered = False
+        msg = "the link was lost"
+        raise ChainwayConnectionError(msg)
+
+    monkeypatch.setattr(client, "_request_once", always_lost)
+    with pytest.raises(ChainwayConnectionError, match="the link was lost"):
+        await client.get_version()
+    assert calls == [Command.GET_VERSION, Command.GET_VERSION]
+
+
+async def test_a_drop_for_an_old_link_leaves_the_current_one_alone(
+    client: ChainwayClient,
+) -> None:
+    lost: list[Exception] = []
+    client.on_connection_lost = lost.append
+    stale = ChainwayProtocol(client._handle_frame, client._schedule_drop_link)
+    await client._drop_link(ChainwayConnectionError("stale"), stale)
+    assert client.connected
+    assert lost == []
+    assert await client.get_version() == FirmwareVersion(1, 2, 3)
+
+
+async def test_two_drops_at_once_report_the_first_error(client: ChainwayClient) -> None:
+    lost: list[Exception] = []
+    client.on_connection_lost = lost.append
+    first = ChainwayConnectionError("first")
+    await asyncio.gather(
+        client._drop_link(first), client._drop_link(ChainwayConnectionError("second"))
+    )
+    assert lost == [first]
+
+
+async def test_failed_keepalive_write_during_a_scan_drops_the_link(
+    reader_server: tuple[FakeReaderLogic, int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    logic, port = reader_server
+    logic.tags_to_stream = []
+    lost: list[Exception] = []
+    client = ChainwayClient(
+        f"socket://127.0.0.1:{port}",
+        keepalive_interval=0.05,
+        dead_link_timeout=60.0,
+    )
+    client.on_connection_lost = lost.append
+    await client.connect()
+    try:
+        await client.start_inventory()
+        assert client._transport is not None
+        monkeypatch.setattr(client._transport, "write", _reset_on_write)
+        for _ in range(100):
+            await asyncio.sleep(0.02)
+            if lost:
+                break
+        assert len(lost) == 1
+        assert isinstance(lost[0], ChainwayConnectionError)
+        assert not client.inventory_active
+    finally:
+        await client.disconnect()
 
 
 async def test_explicit_disconnect_swallows_late_drop_callbacks(

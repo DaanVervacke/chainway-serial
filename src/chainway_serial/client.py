@@ -262,6 +262,7 @@ class ChainwayClient:
         self._last_keepalive = 0.0
         self._link_reported = False
         self._link_lost_error: Exception | None = None
+        self._link_answered = False
         self._quiet_until = 0.0
         self._discarding_tags = False
 
@@ -283,7 +284,10 @@ class ChainwayClient:
         closes during a continuous inventory, so this method sends stop
         inventory first and drops the tag records that arrive before
         the answer. A reader that does not answer, for example while it
-        boots, delays the return by the response timeout.
+        boots, delays the return by the response timeout. When a link
+        fails before it answered anything, the next request opens it
+        again and sends once more, because the UR4 resets some fresh TCP
+        connections.
 
         Raises:
             ChainwayConnectionError: The URL could not be opened.
@@ -291,7 +295,9 @@ class ChainwayClient:
         async with self._lifecycle_lock:
             if self._transport is not None:
                 return
-            protocol = ChainwayProtocol(self._handle_frame, self._schedule_drop_link)
+            protocol = ChainwayProtocol(
+                self._handle_frame, lambda exc: self._schedule_drop_link(exc, protocol)
+            )
             loop = asyncio.get_running_loop()
             self._discarding_tags = True
             try:
@@ -313,6 +319,7 @@ class ChainwayClient:
             self._protocol = protocol
             self._link_reported = False
             self._link_lost_error = None
+            self._link_answered = False
             await self._stop_leftover_scan()
             self._last_keepalive = time.monotonic()
             self._maintenance_task = asyncio.create_task(self._maintenance_loop())
@@ -917,7 +924,7 @@ class ChainwayClient:
                 payload = START_INVENTORY_FREQUENCY_PAYLOAD
             else:
                 payload = START_INVENTORY_PAYLOAD
-            transport.write(build_frame(Command.START_INVENTORY, payload))
+            self._write(transport, build_frame(Command.START_INVENTORY, payload))
             self._inventory_phase = phase
             self._inventory_frequency = frequency
             self._inventory_active = True
@@ -2011,6 +2018,10 @@ class ChainwayClient:
     ) -> bytes:
         """Send one request and return its response payload.
 
+        A link that fails before it answered anything is opened again
+        and the request is sent once more. The UR4 resets some fresh
+        TCP connections without answering.
+
         Raises:
             ChainwayInventoryActiveError: A continuous inventory is
                 running and the command is not stop inventory.
@@ -2018,6 +2029,28 @@ class ChainwayClient:
             ChainwayConnectionError: The link dropped while waiting.
         """
         await self._ensure_connected()
+        protocol = self._protocol
+        try:
+            return await self._request_once(
+                command, payload, allow_during_inventory=allow_during_inventory
+            )
+        except ChainwayConnectionError as err:
+            if self._link_answered:
+                raise
+            _LOGGER.debug("the link failed before its first answer, reconnecting once: %s", err)
+            await self._drop_link(err, protocol)
+        await self._ensure_connected()
+        return await self._request_once(
+            command, payload, allow_during_inventory=allow_during_inventory
+        )
+
+    async def _request_once(
+        self,
+        command: Command,
+        payload: bytes,
+        *,
+        allow_during_inventory: bool,
+    ) -> bytes:
         if self._inventory_active and not allow_during_inventory:
             msg = "the reader only answers stop inventory while a continuous inventory runs"
             raise ChainwayInventoryActiveError(msg)
@@ -2038,7 +2071,11 @@ class ChainwayClient:
         loop = asyncio.get_running_loop()
         future: asyncio.Future[bytes] = loop.create_future()
         self._pending = (command + 1, future)
-        transport.write(build_frame(command, payload))
+        try:
+            self._write(transport, build_frame(command, payload))
+        except ChainwayError:
+            self._pending = None
+            raise
         try:
             async with asyncio.timeout(self.response_timeout):
                 response = await future
@@ -2059,6 +2096,7 @@ class ChainwayClient:
     def _handle_frame(self, command: int, payload: bytes) -> None:
         pending = self._pending
         if pending is not None and pending[0] == command:
+            self._link_answered = True
             if not pending[1].done():
                 pending[1].set_result(payload)
             return
@@ -2108,16 +2146,30 @@ class ChainwayClient:
             task.add_done_callback(self._callback_tasks.discard)
             task.add_done_callback(_consume_task_exception)
 
-    def _schedule_drop_link(self, exc: Exception | None) -> None:
-        task = asyncio.create_task(self._drop_link(exc))
+    def _write(self, transport: BaseSerialTransport, frame: bytes) -> None:
+        try:
+            transport.write(frame)
+        except OSError as err:
+            self._schedule_drop_link(err, self._protocol)
+            raise _link_error(err) from err
+
+    def _schedule_drop_link(
+        self, exc: Exception | None, protocol: ChainwayProtocol | None = None
+    ) -> None:
+        task = asyncio.create_task(self._drop_link(exc, protocol))
         self._callback_tasks.add(task)
         task.add_done_callback(self._callback_tasks.discard)
         task.add_done_callback(_consume_task_exception)
 
-    async def _drop_link(self, exc: Exception | None) -> None:
-        if self._link_lost_error is None:
-            self._link_lost_error = _link_error(exc)
-        transport = await self._shutdown()
+    async def _drop_link(
+        self, exc: Exception | None, protocol: ChainwayProtocol | None = None
+    ) -> None:
+        async with self._lifecycle_lock:
+            if protocol is not None and protocol is not self._protocol:
+                return
+            if self._link_lost_error is None:
+                self._link_lost_error = _link_error(exc)
+            transport = await self._teardown()
         await self._release(transport)
         if not self._link_reported:
             self._link_reported = True
@@ -2164,14 +2216,15 @@ class ChainwayClient:
                 not self._inventory_active
                 and now - protocol.last_activity >= self.dead_link_timeout
             ):
-                await self._drop_link(ChainwayConnectionError("the link went silent"))
+                await self._drop_link(ChainwayConnectionError("the link went silent"), protocol)
                 return
             if now - self._last_keepalive >= self.keepalive_interval:
                 self._last_keepalive = now
                 if self._inventory_active:
                     transport = self._transport
                     if transport is not None:
-                        transport.write(INVENTORY_KEEPALIVE_BYTE)
+                        with suppress(ChainwayError):
+                            self._write(transport, INVENTORY_KEEPALIVE_BYTE)
                 else:
                     with suppress(ChainwayError):
                         await self._request(Command.GET_VERSION)
