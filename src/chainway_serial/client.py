@@ -354,7 +354,11 @@ class ChainwayClient:
         return parse_version(payload)
 
     async def get_device_id(self) -> bytes:
-        """Return the four-byte module ID."""
+        """Return the four-byte device ID.
+
+        The UR4 mainboard answers with bytes 3 to 6 of the reader MAC
+        address.
+        """
         payload = await self._request(Command.GET_DEVICE_ID)
         return parse_device_id(payload)
 
@@ -788,16 +792,20 @@ class ChainwayClient:
         return payload[1] == 0x01
 
     async def software_reset(self) -> None:
-        """Reset the UHF module with the module-level software reset."""
+        """Reboot the reader.
+
+        The UR4 mainboard acknowledges and then reboots the whole
+        reader, which prints its boot console on the serial port.
+        Commands sent during the reboot, about two seconds, time out.
+        """
         response = await self._request(Command.SOFTWARE_RESET)
         _require_ack(response, Command.SOFTWARE_RESET)
 
     async def restore_factory_settings(self) -> None:
         """Restore the factory settings of the UHF module.
 
-        The official protocol document defines opcode 0x74 as the
-        factory reset, the SDKs call the same opcode the soft reset.
-        The link may drop and reconnect.
+        The reader and destination network addresses on the mainboard
+        stay as they are. The SDKs call the same opcode the soft reset.
         """
         response = await self._request(Command.RESTORE_FACTORY_SETTINGS)
         _require_ack(response, Command.RESTORE_FACTORY_SETTINGS)
@@ -1712,7 +1720,12 @@ class ChainwayClient:
         _require_ack(response, Command.CONFIG)
 
     async def get_gpo(self) -> GpoState:
-        """Return the GPO levels."""
+        """Return the levels read by 0xA1 sub 0A.
+
+        On the UR4 this sub reads the trigger inputs GPI1 and GPI2, not
+        the outputs set with :meth:`set_gpo`. ``output_0`` carries GPI1
+        and ``output_1`` carries GPI2.
+        """
         payload = await self._request(Command.CONFIG, bytes((ConfigSubcommand.GET_GPO,)))
         require_status_header(payload, 3, ConfigSubcommand.GET_GPO, "GPO")
         return GpoState(output_0=payload[1] == 0x01, output_1=payload[2] == 0x01)
