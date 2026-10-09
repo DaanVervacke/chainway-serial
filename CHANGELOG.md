@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Before 1.0, breaking changes ship as minor bumps.
 
+## [Unreleased]
+
+### Bug Fixes
+
+- Fire the connection-lost callback once and outside the close wait
+
+### Documentation
+
+- Correct the readme scope table and protocol gaps
+- Align the guides with the current client api
+- Record firmware 7.40.1 live verification in the protocol trail
+
+### Features
+
+- Export SensorSubcommand
+- Add UART baud rate get and set commands
+
 ## [0.2.0] - 2026-10-04
 
 ### Bug Fixes
@@ -56,7 +73,7 @@ Before 1.0, breaking changes ship as minor bumps.
 - Add the fake reader and the test suite
 - Remove vendor demo archives and protocol pdf from the repository
 
-[Unreleased]: https://github.com/DaanVervacke/chainway-serial/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/DaanVervacke/chainway-serial/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/DaanVervacke/chainway-serial/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/DaanVervacke/chainway-serial/releases/tag/v0.1.0
 
