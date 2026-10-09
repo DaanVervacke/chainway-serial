@@ -36,7 +36,7 @@ Models
    :members:
 .. autoclass:: chainway_serial.CollectedTagsFull
    :members:
-.. autoclass:: chainway_serial.GpoState
+.. autoclass:: chainway_serial.GpiState
    :members:
 .. autoclass:: chainway_serial.ReaderAddress
    :members:

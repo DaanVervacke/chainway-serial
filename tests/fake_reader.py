@@ -88,7 +88,8 @@ class FakeReaderLogic:
         self.antenna_mask = b"\x00\x01"
         self.work_mode = 0x00
         self.buzzer_state = 0x01
-        self.gpo_state = b"\x01\x00"
+        self.gpo_state = b"\x00\x00"
+        self.gpi_state = b"\x01\x00"
         self.trigger_config = b"\x00\x00\x64\x00\x0a\x00"
         self.volume = 0x05
         self.antenna_work_time: dict[int, int] = {1: 100}
@@ -188,7 +189,7 @@ class FakeReaderLogic:
             ConfigSubcommand.SET_BUZZER: self._store_buzzer,
             ConfigSubcommand.GET_BUZZER: lambda _payload: b"\x08" + bytes((self.buzzer_state,)),
             ConfigSubcommand.SET_GPO: self._store_gpo,
-            ConfigSubcommand.GET_GPO: lambda _payload: b"\x0a" + self.gpo_state,
+            ConfigSubcommand.GET_GPI: lambda _payload: b"\x0a" + self.gpi_state,
             ConfigSubcommand.SET_TRIGGER_CONFIG: self._store_trigger_config,
             ConfigSubcommand.GET_TRIGGER_CONFIG: lambda _payload: b"\x0c" + self.trigger_config,
             ConfigSubcommand.SET_VOLUME: self._store_volume,

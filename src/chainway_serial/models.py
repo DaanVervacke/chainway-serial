@@ -292,11 +292,11 @@ class TriggerConfig:
 
 
 @dataclass(frozen=True, slots=True)
-class GpoState:
-    """GPO output levels from 0xA1 sub 0A."""
+class GpiState:
+    """Trigger input levels GPI1 and GPI2 from 0xA1 sub 0A."""
 
-    output_0: bool
-    output_1: bool
+    input_1: bool
+    input_2: bool
 
 
 @dataclass(frozen=True, slots=True)

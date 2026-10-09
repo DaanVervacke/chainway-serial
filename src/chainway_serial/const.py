@@ -176,7 +176,7 @@ class ConfigSubcommand(IntEnum):
     SET_BUZZER = 0x07
     GET_BUZZER = 0x08
     SET_GPO = 0x09
-    GET_GPO = 0x0A
+    GET_GPI = 0x0A
     SET_TRIGGER_CONFIG = 0x0B
     GET_TRIGGER_CONFIG = 0x0C
     SET_VOLUME = 0x11

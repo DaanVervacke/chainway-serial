@@ -74,7 +74,7 @@ from .models import (
     CollectedTagsFull,
     FirmwareVersion,
     Gen2Parameters,
-    GpoState,
+    GpiState,
     InventoryMode,
     InventoryModeConfig,
     LockBank,
@@ -1719,16 +1719,15 @@ class ChainwayClient:
         )
         _require_ack(response, Command.CONFIG)
 
-    async def get_gpo(self) -> GpoState:
-        """Return the levels read by 0xA1 sub 0A.
+    async def get_gpi(self) -> GpiState:
+        """Return the trigger input levels GPI1 and GPI2.
 
-        On the UR4 this sub reads the trigger inputs GPI1 and GPI2, not
-        the outputs set with :meth:`set_gpo`. ``output_0`` carries GPI1
-        and ``output_1`` carries GPI2.
+        The reader has no command that reads back the outputs set with
+        :meth:`set_gpo`.
         """
-        payload = await self._request(Command.CONFIG, bytes((ConfigSubcommand.GET_GPO,)))
-        require_status_header(payload, 3, ConfigSubcommand.GET_GPO, "GPO")
-        return GpoState(output_0=payload[1] == 0x01, output_1=payload[2] == 0x01)
+        payload = await self._request(Command.CONFIG, bytes((ConfigSubcommand.GET_GPI,)))
+        require_status_header(payload, 3, ConfigSubcommand.GET_GPI, "GPI")
+        return GpiState(input_1=payload[1] == 0x01, input_2=payload[2] == 0x01)
 
     async def set_trigger_config(self, config: TriggerConfig) -> None:
         """Set the trigger work mode timing."""

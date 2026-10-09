@@ -136,7 +136,7 @@ Peripherals
    await client.blink_led(10, 20, 30)
    await client.stop_buzzer()
    await client.set_gpo(output_0=True, output_1=False, relay_closed=True)
-   print(await client.get_gpo())
+   print(await client.get_gpi())
 
 Module settings
 ---------------

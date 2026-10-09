@@ -72,7 +72,7 @@ async def probe_reader(client: ChainwayClient) -> dict[str, object]:
     results["antenna_mask"] = await client.get_antenna_mask()
     results["work_mode"] = (await client.get_work_mode()).name
     results["buzzer"] = await client.get_buzzer()
-    results["gpo"] = asdict(await client.get_gpo())
+    results["gpi"] = asdict(await client.get_gpi())
     results["trigger_config"] = asdict(await client.get_trigger_config())
     results["volume"] = await client.get_volume()
     results["reader_address"] = asdict(await client.get_reader_address())

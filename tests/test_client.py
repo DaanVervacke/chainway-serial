@@ -742,11 +742,23 @@ async def test_buzzer_roundtrip(client: ChainwayClient) -> None:
     assert await client.get_buzzer() is False
 
 
-async def test_gpo_roundtrip(client: ChainwayClient) -> None:
+async def test_gpo_set_sends_both_outputs_and_the_relay(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
     await client.set_gpo(output_0=True, output_1=False, relay_closed=True)
-    state = await client.get_gpo()
-    assert state.output_0 is True
-    assert state.output_1 is False
+    assert received(logic, Command.CONFIG) == b"\x09\x01\x00\x01"
+
+
+async def test_gpi_reads_the_inputs_not_the_outputs(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    logic.gpi_state = b"\x00\x01"
+    await client.set_gpo(output_0=True, output_1=True, relay_closed=True)
+    state = await client.get_gpi()
+    assert state.input_1 is False
+    assert state.input_2 is True
 
 
 async def test_trigger_config_roundtrip(
