@@ -32,9 +32,7 @@ from .const import (
     MAINTENANCE_TICK,
     MAX_ANTENNA,
     MAX_FIXED_FREQUENCY_KHZ,
-    MAX_POWER_DBM,
     MIN_ANTENNA,
-    MIN_POWER_DBM,
     MODULE_WORK_TIME_BYTES,
     MODULE_WORK_TIME_MAX,
     RESTORE_COMMIT_DELAY,
@@ -175,6 +173,24 @@ def _reject_unsupported(payload: bytes, command: Command) -> None:
     if payload == UNSUPPORTED_REPLY:
         msg = f"the reader does not support command {command:#04x}, it answered a bare 00 byte"
         raise ChainwayUnsupportedCommandError(msg)
+
+
+def _require_byte(name: str, value: int) -> None:
+    if not 0 <= value <= BYTE_MAX:
+        msg = f"{name} must be between 0 and 255, got {value}"
+        raise ValueError(msg)
+
+
+def _word_count_of(data: bytes) -> int:
+    if not data or len(data) % 2 != 0:
+        msg = f"data must be a non-empty even number of bytes, got {len(data)}"
+        raise ValueError(msg)
+    return len(data) // 2
+
+
+def _word_window(bank: MemoryBank, word_address: int, word_count: int) -> bytes:
+    validate_word_window(word_address, word_count)
+    return bytes((bank,)) + word_address.to_bytes(2) + word_count.to_bytes(2)
 
 
 def _require_tag_success(payload: bytes, command: Command) -> None:
@@ -469,9 +485,7 @@ class ChainwayClient:
         Raises:
             ValueError: The value does not fit one byte.
         """
-        if not 0 <= value <= BYTE_MAX:
-            msg = f"temperature protect value must be between 0 and 255, got {value}"
-            raise ValueError(msg)
+        _require_byte("temperature protect value", value)
         response = await self._request(Command.SET_TEMPERATURE_PROTECT, bytes((value,)))
         _require_ack(response, Command.SET_TEMPERATURE_PROTECT)
 
@@ -513,9 +527,7 @@ class ChainwayClient:
         Raises:
             ValueError: The mode does not fit one byte.
         """
-        if not 0 <= mode <= BYTE_MAX:
-            msg = f"mode must be between 0 and 255, got {mode}"
-            raise ValueError(msg)
+        _require_byte("mode", mode)
         response = await self._request(Command.SET_DUAL_SINGLE_MODE, bytes((int(save), mode)))
         _require_ack(response, Command.SET_DUAL_SINGLE_MODE)
 
@@ -534,9 +546,7 @@ class ChainwayClient:
         Raises:
             ValueError: The value is out of range.
         """
-        if not 0 <= value <= BYTE_MAX:
-            msg = f"idle sleep time must be between 0 and 255, got {value}"
-            raise ValueError(msg)
+        _require_byte("idle sleep time", value)
         response = await self._request(
             Command.PERIPHERAL, bytes((PeripheralSubcommand.IDLE_SLEEP_SET, value))
         )
@@ -562,9 +572,6 @@ class ChainwayClient:
             ValueError: The antenna number or the power value is out
                 of range.
         """
-        if not MIN_POWER_DBM <= power_dbm <= MAX_POWER_DBM:
-            msg = f"power must be between {MIN_POWER_DBM} and {MAX_POWER_DBM} dBm, got {power_dbm}"
-            raise ValueError(msg)
         payload = build_power_payload(antenna, power_dbm, power_dbm, save=save)
         response = await self._request(Command.SET_POWER, payload)
         _require_ack(response, Command.SET_POWER)
@@ -583,10 +590,6 @@ class ChainwayClient:
             ValueError: The antenna number or a power value is out of
                 range.
         """
-        for power in (read_power_dbm, write_power_dbm):
-            if not MIN_POWER_DBM <= power <= MAX_POWER_DBM:
-                msg = f"power must be between {MIN_POWER_DBM} and {MAX_POWER_DBM} dBm, got {power}"
-                raise ValueError(msg)
         payload = build_power_payload(antenna, read_power_dbm, write_power_dbm, save=save)
         response = await self._request(Command.SET_POWER, payload)
         _require_ack(response, Command.SET_POWER)
@@ -801,7 +804,7 @@ class ChainwayClient:
         if not 0 <= mask <= WORD_MAX:
             msg = f"mask must be between 0 and 65535, got {mask}"
             raise ValueError(msg)
-        payload = bytes((int(save), mask >> 8 & 0xFF, mask & 0xFF))
+        payload = bytes((int(save),)) + mask.to_bytes(2)
         response = await self._request(Command.SET_ANTENNA_MASK, payload)
         _require_ack(response, Command.SET_ANTENNA_MASK)
 
@@ -826,7 +829,7 @@ class ChainwayClient:
         if not 0 <= work_time <= WORD_MAX:
             msg = f"work time must be between 0 and 65535, got {work_time}"
             raise ValueError(msg)
-        payload = bytes((int(save) << 4 | antenna, work_time >> 8 & 0xFF, work_time & 0xFF))
+        payload = bytes((int(save) << 4 | antenna,)) + work_time.to_bytes(2)
         response = await self._request(Command.SET_ANTENNA_WORK_TIME, payload)
         _require_ack(response, Command.SET_ANTENNA_WORK_TIME)
 
@@ -1021,16 +1024,7 @@ class ChainwayClient:
             ValueError: The window or password is invalid.
             ChainwayResponseError: The reader reported a failure.
         """
-        validate_word_window(word_address, word_count)
-        tail = bytes(
-            (
-                bank,
-                word_address >> 8 & 0xFF,
-                word_address & 0xFF,
-                word_count >> 8 & 0xFF,
-                word_count & 0xFF,
-            )
-        )
+        tail = _word_window(bank, word_address, word_count)
         payload = build_tag_operation_payload(access_password, tag_filter, tail)
         response = await self._request(Command.READ_TAG, payload)
         _require_tag_success(response, Command.READ_TAG)
@@ -1052,23 +1046,7 @@ class ChainwayClient:
                 invalid.
             ChainwayResponseError: The reader reported a failure.
         """
-        if not data or len(data) % 2 != 0:
-            msg = f"data must be a non-empty even number of bytes, got {len(data)}"
-            raise ValueError(msg)
-        validate_word_window(word_address, len(data) // 2)
-        word_count = len(data) // 2
-        tail = (
-            bytes(
-                (
-                    bank,
-                    word_address >> 8 & 0xFF,
-                    word_address & 0xFF,
-                    word_count >> 8 & 0xFF,
-                    word_count & 0xFF,
-                )
-            )
-            + data
-        )
+        tail = _word_window(bank, word_address, _word_count_of(data)) + data
         payload = build_tag_operation_payload(access_password, tag_filter, tail)
         response = await self._request(Command.WRITE_TAG, payload)
         _require_tag_success(response, Command.WRITE_TAG)
@@ -1089,23 +1067,7 @@ class ChainwayClient:
                 invalid.
             ChainwayResponseError: The reader reported a failure.
         """
-        if not data or len(data) % 2 != 0:
-            msg = f"data must be a non-empty even number of bytes, got {len(data)}"
-            raise ValueError(msg)
-        validate_word_window(word_address, len(data) // 2)
-        word_count = len(data) // 2
-        tail = (
-            bytes(
-                (
-                    bank,
-                    word_address >> 8 & 0xFF,
-                    word_address & 0xFF,
-                    word_count >> 8 & 0xFF,
-                    word_count & 0xFF,
-                )
-            )
-            + data
-        )
+        tail = _word_window(bank, word_address, _word_count_of(data)) + data
         payload = build_tag_operation_payload(access_password, tag_filter, tail)
         response = await self._request(Command.BLOCK_WRITE_TAG, payload)
         _require_tag_success(response, Command.BLOCK_WRITE_TAG)
@@ -1125,16 +1087,7 @@ class ChainwayClient:
             ValueError: The window is invalid.
             ChainwayResponseError: The reader reported a failure.
         """
-        validate_word_window(word_address, word_count)
-        tail = bytes(
-            (
-                bank,
-                word_address >> 8 & 0xFF,
-                word_address & 0xFF,
-                word_count >> 8 & 0xFF,
-                word_count & 0xFF,
-            )
-        )
+        tail = _word_window(bank, word_address, word_count)
         payload = build_tag_operation_payload(access_password, tag_filter, tail)
         response = await self._request(Command.BLOCK_ERASE_TAG, payload)
         _require_tag_success(response, Command.BLOCK_ERASE_TAG)
@@ -1201,9 +1154,7 @@ class ChainwayClient:
         if len(challenge) != AUTH_CHALLENGE_SIZE:
             msg = f"challenge must be {AUTH_CHALLENGE_SIZE} bytes, got {len(challenge)}"
             raise ValueError(msg)
-        if not 0 <= key_id <= BYTE_MAX:
-            msg = f"key ID must be between 0 and 255, got {key_id}"
-            raise ValueError(msg)
+        _require_byte("key ID", key_id)
         tail = bytes((AUTH_KEY_AND_DATA_SIZE, key_id)) + challenge
         payload = build_tag_operation_payload(access_password, tag_filter, tail)
         response = await self._request(Command.AUTHENTICATE_TAG, payload)
@@ -1267,16 +1218,7 @@ class ChainwayClient:
             ChainwayResponseError: The reader reported a failure.
         """
         validate_block_window(block_ptr, block_range)
-        tail = bytes(
-            (
-                0x00,
-                bank,
-                block_ptr >> 8 & 0xFF,
-                block_ptr & 0xFF,
-                block_range >> 8 & 0xFF,
-                block_range & 0xFF,
-            )
-        )
+        tail = bytes((0x00, bank)) + block_ptr.to_bytes(2) + block_range.to_bytes(2)
         payload = build_tag_operation_payload(access_password, tag_filter, tail)
         response = await self._request(Command.BLOCK_PERMALOCK_TAG, payload)
         _require_tag_success(response, Command.BLOCK_PERMALOCK_TAG)
@@ -1317,17 +1259,8 @@ class ChainwayClient:
         if not 0 <= mask <= WORD_MAX:
             msg = f"mask must be between 0 and 65535, got {mask}"
             raise ValueError(msg)
-        tail = bytes(
-            (
-                0x01,
-                bank,
-                block_ptr >> 8 & 0xFF,
-                block_ptr & 0xFF,
-                block_range >> 8 & 0xFF,
-                block_range & 0xFF,
-                mask >> 8 & 0xFF,
-                mask & 0xFF,
-            )
+        tail = (
+            bytes((0x01, bank)) + block_ptr.to_bytes(2) + block_range.to_bytes(2) + mask.to_bytes(2)
         )
         payload = build_tag_operation_payload(access_password, tag_filter, tail)
         response = await self._request(Command.BLOCK_PERMALOCK_TAG, payload)
@@ -1358,9 +1291,7 @@ class ChainwayClient:
             ChainwayResponseError: The reader did not acknowledge the
                 write.
         """
-        if not 0 <= qt_data <= BYTE_MAX:
-            msg = f"QT value must be between 0 and 255, got {qt_data}"
-            raise ValueError(msg)
+        _require_byte("QT value", qt_data)
         payload = build_tag_operation_payload(access_password, tag_filter, bytes((qt_data,)))
         response = await self._request(Command.SET_QT, payload)
         _require_ack(response, Command.SET_QT)
@@ -1417,20 +1348,8 @@ class ChainwayClient:
             ValueError: The QT value or the window is invalid.
             ChainwayResponseError: The reader reported a failure.
         """
-        if not 0 <= qt_data <= BYTE_MAX:
-            msg = f"QT value must be between 0 and 255, got {qt_data}"
-            raise ValueError(msg)
-        validate_word_window(word_address, word_count)
-        tail = bytes(
-            (
-                qt_data,
-                bank,
-                word_address >> 8 & 0xFF,
-                word_address & 0xFF,
-                word_count >> 8 & 0xFF,
-                word_count & 0xFF,
-            )
-        )
+        _require_byte("QT value", qt_data)
+        tail = bytes((qt_data,)) + _word_window(bank, word_address, word_count)
         payload = build_tag_operation_payload(access_password, tag_filter, tail)
         response = await self._request(Command.READ_QT, payload)
         _require_tag_success(response, Command.READ_QT)
@@ -1453,27 +1372,8 @@ class ChainwayClient:
                 odd or the window is invalid.
             ChainwayResponseError: The reader reported a failure.
         """
-        if not 0 <= qt_data <= BYTE_MAX:
-            msg = f"QT value must be between 0 and 255, got {qt_data}"
-            raise ValueError(msg)
-        if not data or len(data) % 2 != 0:
-            msg = f"data must be a non-empty even number of bytes, got {len(data)}"
-            raise ValueError(msg)
-        validate_word_window(word_address, len(data) // 2)
-        word_count = len(data) // 2
-        tail = (
-            bytes(
-                (
-                    qt_data,
-                    bank,
-                    word_address >> 8 & 0xFF,
-                    word_address & 0xFF,
-                    word_count >> 8 & 0xFF,
-                    word_count & 0xFF,
-                )
-            )
-            + data
-        )
+        _require_byte("QT value", qt_data)
+        tail = bytes((qt_data,)) + _word_window(bank, word_address, _word_count_of(data)) + data
         payload = build_tag_operation_payload(access_password, tag_filter, tail)
         response = await self._request(Command.WRITE_QT, payload)
         _require_tag_success(response, Command.WRITE_QT)
@@ -1863,17 +1763,11 @@ class ChainwayClient:
         """
         work_units = config.work_time_ms // 10
         interval_units = config.min_interval_ms // 10
-        payload = bytes(
-            (
-                ConfigSubcommand.SET_TRIGGER_CONFIG,
-                config.input,
-                work_units >> 8 & 0xFF,
-                work_units & 0xFF,
-                interval_units >> 8 & 0xFF,
-                interval_units & 0xFF,
-                config.output,
-                0x00,
-            )
+        payload = (
+            bytes((ConfigSubcommand.SET_TRIGGER_CONFIG, config.input))
+            + work_units.to_bytes(2)
+            + interval_units.to_bytes(2)
+            + bytes((config.output, 0x00))
         )
         response = await self._request(Command.CONFIG, payload)
         _require_ack(response, Command.CONFIG)
@@ -1900,9 +1794,7 @@ class ChainwayClient:
         Raises:
             ValueError: The volume is out of range.
         """
-        if not 0 <= volume <= BYTE_MAX:
-            msg = f"volume must be between 0 and 255, got {volume}"
-            raise ValueError(msg)
+        _require_byte("volume", volume)
         response = await self._request(Command.CONFIG, bytes((ConfigSubcommand.SET_VOLUME, volume)))
         if response[:1] != b"\x01" and response != b"\x11\x01":
             msg = f"volume set was not acknowledged, got payload {response!r}"
@@ -1932,9 +1824,7 @@ class ChainwayClient:
         Raises:
             ValueError: The duration is out of range.
         """
-        if not 0 <= duration <= BYTE_MAX:
-            msg = f"duration must be between 0 and 255, got {duration}"
-            raise ValueError(msg)
+        _require_byte("duration", duration)
         response = await self._request(
             Command.PERIPHERAL,
             bytes((PeripheralSubcommand.BUZZER_DURATION, 0x01, duration)),
@@ -1969,9 +1859,7 @@ class ChainwayClient:
             ValueError: A color component is out of range.
         """
         for name, component in (("red", red), ("green", green), ("blue", blue)):
-            if not 0 <= component <= BYTE_MAX:
-                msg = f"{name} must be between 0 and 255, got {component}"
-                raise ValueError(msg)
+            _require_byte(name, component)
         response = await self._request(
             Command.PERIPHERAL,
             bytes((PeripheralSubcommand.LED, 0x02, red, green, blue)),

@@ -256,21 +256,16 @@ def build_power_payload(
         ValueError: The antenna number or a power value is out of range.
     """
     if not MIN_ANTENNA <= antenna <= MAX_ANTENNA:
-        msg = f"antenna must be between 1 and 16, got {antenna}"
+        msg = f"antenna must be between {MIN_ANTENNA} and {MAX_ANTENNA}, got {antenna}"
         raise ValueError(msg)
+    for power in (read_power_dbm, write_power_dbm):
+        if not MIN_POWER_DBM <= power <= MAX_POWER_DBM:
+            msg = f"power must be between {MIN_POWER_DBM} and {MAX_POWER_DBM} dBm, got {power}"
+            raise ValueError(msg)
     read_centi = round(read_power_dbm * 100)
     write_centi = round(write_power_dbm * 100)
     status = 0x02 if save else 0x00
-    return bytes(
-        (
-            status,
-            antenna,
-            read_centi >> 8 & 0xFF,
-            read_centi & 0xFF,
-            write_centi >> 8 & 0xFF,
-            write_centi & 0xFF,
-        )
-    )
+    return bytes((status, antenna)) + read_centi.to_bytes(2) + write_centi.to_bytes(2)
 
 
 def _decode_rssi(rssi_bytes: bytes) -> float | None:
@@ -443,19 +438,7 @@ def parse_collected_tags(payload: bytes) -> CollectedTags:
     if len(payload) < BATCH_MIN_PAYLOAD:
         return CollectedTags(index=payload[0] << 8 | payload[1], tags=())
     index = payload[0] << 8 | payload[1]
-    count = payload[2]
-    tags: list[bytes] = []
-    offset = 3
-    for _ in range(count):
-        if offset >= len(payload):
-            break
-        length = payload[offset]
-        end = offset + 1 + length
-        if end > len(payload):
-            break
-        tags.append(payload[offset + 1 : end])
-        offset = end
-    return CollectedTags(index=index, tags=tuple(tags))
+    return CollectedTags(index=index, tags=_split_records(payload, payload[2], 3))
 
 
 def parse_collected_tags_full(payload: bytes) -> CollectedTagsFull:
@@ -475,21 +458,11 @@ def parse_collected_tags_full(payload: bytes) -> CollectedTagsFull:
     index = payload[1] << 8 | payload[2]
     if len(payload) < BATCH_MIN_PAYLOAD + 1:
         return CollectedTagsFull(index=index, tags=())
-    count = payload[3]
-    tags: list[Tag] = []
-    offset = 4
-    for _ in range(count):
-        if offset >= len(payload):
-            break
-        length = payload[offset]
-        end = offset + 1 + length
-        if end > len(payload):
-            break
-        tags.append(
-            parse_tag_record(payload[offset + 1 : end], with_antenna=False, received_at=now_utc())
-        )
-        offset = end
-    return CollectedTagsFull(index=index, tags=tuple(tags))
+    tags = tuple(
+        parse_tag_record(record, with_antenna=False, received_at=now_utc())
+        for record in _split_records(payload, payload[3], 4)
+    )
+    return CollectedTagsFull(index=index, tags=tags)
 
 
 def parse_flash_tags(payload: bytes) -> tuple[bytes, ...]:
@@ -501,19 +474,20 @@ def parse_flash_tags(payload: bytes) -> tuple[bytes, ...]:
     the payload through raw, so the shape is unverified on the UR4.
     """
     require_minimum_length(payload, 1, "flash")
-    count = payload[0]
-    tags: list[bytes] = []
-    offset = 1
+    return _split_records(payload, payload[0], 1)
+
+
+def _split_records(payload: bytes, count: int, offset: int) -> tuple[bytes, ...]:
+    records: list[bytes] = []
     for _ in range(count):
         if offset >= len(payload):
             break
-        length = payload[offset]
-        end = offset + 1 + length
+        end = offset + 1 + payload[offset]
         if end > len(payload):
             break
-        tags.append(payload[offset + 1 : end])
+        records.append(payload[offset + 1 : end])
         offset = end
-    return tuple(tags)
+    return tuple(records)
 
 
 def build_lock_code(banks: Iterable[LockBank], mode: LockMode) -> bytes:
@@ -536,9 +510,7 @@ def build_lock_code(banks: Iterable[LockBank], mode: LockMode) -> bytes:
         if mode in (LockMode.LOCK, LockMode.PERMANENTLY_LOCK):
             code |= action_high
         if mode in (LockMode.PERMANENTLY_OPEN, LockMode.PERMANENTLY_LOCK):
-            code |= mask_flag
-        if mode in (LockMode.PERMANENTLY_OPEN, LockMode.PERMANENTLY_LOCK):
-            code |= action_low
+            code |= mask_flag | action_low
     return code.to_bytes(3)
 
 
@@ -606,34 +578,22 @@ def build_reader_address_payload(subcommand: int, address: ReaderAddress) -> byt
     A payload with a subnet mask and gateway carries 15 bytes, one
     without carries 7.
     """
-    octets = bytes(int(part) for part in address.ip.split("."))
+    payload = bytes((subcommand,)) + _octets(address.ip) + address.port.to_bytes(2)
     if address.subnet_mask is None or address.gateway is None:
-        return (
-            bytes((subcommand,)) + octets + bytes((address.port >> 8 & 0xFF, address.port & 0xFF))
-        )
-    mask = bytes(int(part) for part in address.subnet_mask.split("."))
-    gateway = bytes(int(part) for part in address.gateway.split("."))
-    return (
-        bytes((subcommand,))
-        + octets
-        + bytes((address.port >> 8 & 0xFF, address.port & 0xFF))
-        + mask
-        + gateway
-    )
+        return payload
+    return payload + _octets(address.subnet_mask) + _octets(address.gateway)
+
+
+def _octets(dotted_quad: str) -> bytes:
+    return bytes(int(part) for part in dotted_quad.split("."))
 
 
 def _filter_bytes(tag_filter: TagFilter) -> bytes:
     data_length = math.ceil(tag_filter.bit_length / 8)
     return (
-        bytes(
-            (
-                tag_filter.bank,
-                tag_filter.bit_address >> 8 & 0xFF,
-                tag_filter.bit_address & 0xFF,
-                tag_filter.bit_length >> 8 & 0xFF,
-                tag_filter.bit_length & 0xFF,
-            )
-        )
+        bytes((tag_filter.bank,))
+        + tag_filter.bit_address.to_bytes(2)
+        + tag_filter.bit_length.to_bytes(2)
         + tag_filter.data[:data_length]
     )
 
@@ -799,20 +759,7 @@ def build_filter_payload(tag_filter: TagFilter | None, *, save: bool) -> bytes:
     """
     if tag_filter is None or tag_filter.bit_length == 0:
         return bytes((int(save), MemoryBank.EPC, 0, 0, 0, 0))
-    data_length = math.ceil(tag_filter.bit_length / 8)
-    return (
-        bytes((int(save),))
-        + bytes(
-            (
-                tag_filter.bank,
-                tag_filter.bit_address >> 8 & 0xFF,
-                tag_filter.bit_address & 0xFF,
-                tag_filter.bit_length >> 8 & 0xFF,
-                tag_filter.bit_length & 0xFF,
-            )
-        )
-        + tag_filter.data[:data_length]
-    )
+    return bytes((int(save),)) + _filter_bytes(tag_filter)
 
 
 def validate_word_window(word_address: int, word_count: int) -> None:
