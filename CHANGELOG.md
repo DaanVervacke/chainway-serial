@@ -20,6 +20,9 @@ Before 1.0, breaking changes ship as minor bumps.
 - Stop a leftover scan when connecting
 - Reopen a TCP link that resets before its first answer
 - Listen 12 seconds for reader discovery by default
+- Validate the subnet mask and gateway of a reader address
+- Sort discovered readers by numeric address and wrap port errors
+- Keep the keepalive from reopening a link
 
 ### Documentation
 
@@ -40,6 +43,14 @@ Before 1.0, breaking changes ship as minor bumps.
 - Record the TCP link behavior and the factory address reset
 - Record UDP push, scan handover and TCP timing
 - Align the guides with TCP testing, reset timing and the gate
+- Record that the reader keeps an idle TCP link open
+- Note that the UR4 rejects a stored antenna work time
+- Drop the module settings example the UR4 does not answer
+- Show the protocol type as read only on the UR4
+- List every command the UR4 does not support on one page
+- Document the tag and connection lost callback types
+- Narrow the secrets rule to passwords and live deployment data
+- Ban every code comment in the contributing rules
 
 ### Features
 
@@ -55,6 +66,7 @@ Before 1.0, breaking changes ship as minor bumps.
 - Update the changelog
 - Update the changelog
 - Add UR4 mainboard firmware dumps
+- Update the changelog
 - Update the changelog
 - Update the changelog
 - Update the changelog
