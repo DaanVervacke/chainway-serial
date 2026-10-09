@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "chainway-serial"
-version = "0.2.0"
+version = "0.2.1"
 description = "Asynchronous Python library for Chainway UR4 UHF RFID readers over serial and TCP"
 readme = "README.md"
 license = "MIT"
