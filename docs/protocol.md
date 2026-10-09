@@ -94,7 +94,7 @@ The Android SDK connection managers send a heartbeat only after 5 seconds of inb
 | 0x02 | empty | 0x03, payload `maj min patch` | Firmware version, printed as V<maj>.<min>.<patch>. The Android SDK renames known majors: 3 = E310, 5 = E510, 7 = E710 |
 | 0xC8 | empty | 0xC9, payload `maj min patch` | STM32 microcontroller version, digits are raw values, printed as V<maj>.<min>.<patch> |
 | 0x00 | empty | 0x01, payload `maj min patch` | Hardware version of the module, printed as V<maj>.<min>.<patch>. On an Ex10 module this is the version of the Ex10 chip, per the official protocol document |
-| 0x04 | empty | 0x05, payload 4 bytes | Module ID, for example `F1 F2 F3 F4` |
+| 0x04 | empty | 0x05, payload 4 bytes | Device ID, for example `F1 F2 F3 F4`. On the UR4 the mainboard answers it with bytes 3 to 6 of the reader MAC address: MAC `00-58-34-00-2C-00` reads `34 00 2C 00` |
 | 0x34 | empty | 0x35, payload `01 hi lo` | Reader temperature. Value = 16-bit big-endian / 100 in degrees C, negative numbers are two's complement, per the official protocol document. The two Java SDKs instead treat `hi >= 0xF0` as negative and compute `(raw - 65535) / 100`, which differs by 0.01 degrees. The DLL document claims Fahrenheit, the two Java SDKs parse centigrade |
 | 0x4E | empty | 0x4F, payload 2 bytes | Antenna connection state, a 16-bit mask: bit 0 = ANT1 through bit 15 = ANT16, per the official protocol document |
 | 0xE4 sub 01 | `01` | 0xE5, payload `01 pct` | Battery charge percentage |
@@ -114,8 +114,8 @@ Power values on the wire are centi-dBm, big-endian, so 30 dBm = 0x0BB8.
 |---|---|---|---|
 | 0x14 | `01 f2 f1 f0` | 0x15, payload `01` | Set fixed frequency, value in kHz, 3-byte big-endian, for example 920125. The leading `01` is the number of frequency points, only one is supported. The setting is volatile and clears at a power cycle |
 | 0x16 | empty | 0x17, payload `count` then `count` times 3 bytes | Get the fixed frequency table, values in kHz, 3-byte big-endian |
-| 0x1C | `code` | 0x1D, payload `01` | Set the UART baud rate, one code byte. 0x02 is 115200, 0x03 is 460800, the vendor SDKs reject every other code. The reader acknowledges immediately but keeps talking at the current rate and switches at the next power cycle. The setting persists across power loss. Verified on firmware 7.40.1 with `A5 5A 00 09 1C 02 17 0D 0A` answered by `A5 5A 00 09 1D 01 15 0D 0A` |
-| 0x1E | empty | 0x1F, payload `01 code` | Get the pending UART baud rate code. Verified on firmware 7.40.1 with `A5 5A 00 08 1E 16 0D 0A` answered by `A5 5A 00 0A 1F 01 02 16 0D 0A` |
+| 0x1C | `code` | 0x1D, payload `01` or `00` | Set the baud rate of the internal UART between the UR4 mainboard and the UHF module, one code byte, applied at the next power cycle and persistent. The module accepts codes 0x01, 0x02 and 0x03 and rejects every other code with `00`. 0x02 is 115200 and 0x03 is 460800: the mainboard follows both, so the host port moves with them. The mainboard does not know 0x01: after a reboot it stays at 115200, the module runs at the code 0x01 rate, and every module command goes unanswered. **Never send 0x01**, the module is then unreachable from the host. The vendor SDKs only allow 0x02 and 0x03. Frames: `A5 5A 00 09 1C 02 17 0D 0A` answered by `A5 5A 00 09 1D 01 15 0D 0A` |
+| 0x1E | empty | 0x1F, payload `01 code` | Get the pending internal baud rate code, answered by the module. Frames: `A5 5A 00 08 1E 16 0D 0A` answered by `A5 5A 00 0A 1F 01 02 16 0D 0A` |
 | 0x2C | `save region` | 0x2D, payload `01` | Set frequency region. `save` 0 or 1. Region: see the table below |
 | 0x2E | empty | 0x2F, payload `01 region` | Get frequency region |
 | 0x24 | `on` | 0x25, payload `01` | Set continuous carrier wave, 0 off, 1 on |
@@ -133,8 +133,8 @@ Power values on the wire are centi-dBm, big-endian, so 30 dBm = 0x0BB8.
 | 0x30 | `01 value` | 0x31 | Set power-on dynamic configuration, semantics **unverified**, the Android SDK ships no response parser |
 | 0x64 | `save enable 00` | 0x65, payload `01` | Set fast inventory mode. `save` 0 or 1, semantics of the mode **unverified** |
 | 0x66 | `00 00` | 0x67, payload `01 enable` | Get fast inventory mode |
-| 0x68 | empty | 0x69, payload `01` | Software reset of the UHF module, the official protocol document's module-level reset |
-| 0x74 | empty | 0x75, payload `01` | Restore factory settings. The official protocol document defines 0x74 as the factory reset, the SDKs call the same opcode the soft reset. Which behavior the UR4 firmware implements is **unverified** |
+| 0x68 | empty | 0x69, payload `01` | Software reset. On the UR4 the mainboard answers it and then reboots the whole reader, bootloader banner included. A serial link through a USB adapter stays open across the reboot |
+| 0x74 | empty | 0x75, payload `01` | Restore factory settings, forwarded to the UHF module. It resets the module settings and keeps the reader and destination network addresses |
 
 Frequency regions, from the official protocol document:
 
@@ -273,7 +273,7 @@ Presence of the flash commands on the UR4 is **unverified**, the Android SDK inh
 | 07 | `07 state` | `01` | Buzzer on or off |
 | 08 | `08` | `08 state` | Get buzzer state |
 | 09 | `09 gpo0 gpo1 status` | `01` | Set GPO relay outputs. Each GPO is 0 low or 1 high, status 0 open or 1 closed |
-| 0A | `0A` | `0A gpo0 gpo1` | Get GPO output state |
+| 0A | `0A` | `0A gpi1 gpi2` | Get the trigger input levels GPI1 and GPI2. The UR4 Java SDK calls this `getGPI`, the C# demo wraps it as "Get GPI state On UR4". It does not read back the outputs set with sub 09 |
 | 0B | `0B io workHi workLo intHi intLo out 00` | `01` | Set trigger mode parameters. See below |
 | 0C | `0C` | `0C io workHi workLo intHi intLo out` | Get trigger mode parameters |
 | 11 | `11 volume` | `01` or `11 01` | Set buzzer volume. The Android SDK is the only source and expects the subcommand echoed back, the family convention answers `01`, so both are accepted. **Unverified** |
@@ -498,18 +498,55 @@ From the vendor manual: the start and stop conditions in trigger mode must be op
 
 ## Live verification, UR4 firmware 7.40.1
 
-Observed on a UR4 over RS-232 at 115200 in October 2026, no antenna connected unless noted:
+Observed on one UR4 over RS-232 at 115200 in October 2026, mainboard firmware 7.0.9, UHF module firmware 7.40.1, hardware 2.2.0, no antenna and no tags. Raw frames live in `captures/`.
 
-- Every 0xA1 sub-set is followed by a mute window: 0xA1 gets time out for roughly 2 to 4 seconds while the module commits, then answer again. Gets without a preceding set never time out
-- 0xA1 sub 11 and 12, buzzer volume, are never answered, set and get both time out. Sub 09, GPO set, is acknowledged but the outputs read back low
-- The 0xE4 peripheral family answers none of its subs: battery, barcode, buzzer, LED and idle sleep all answer a bare `00`
-- Without an antenna, 0x80 single inventory and 0x82 start inventory are silent, no error frame. 0x24 carrier wave is acknowledged and transmits into the open port
-- 0x10 set power applies the value to all four antennas regardless of the antenna byte, the same for the 0xA1-independent per-antenna power form
+### Architecture
+
+The UR4 is an STM32 mainboard in front of a UHF module. The mainboard answers a small set of commands itself and forwards everything else to the module over an internal UART. The split, measured with the module unreachable:
+
+- Mainboard: 0x04 device ID, 0x68 software reset, the whole 0xA1 configuration family, 0xC8 STM32 version
+- Module: every other command in this document, including 0x1C, 0x1E, 0x74 and the 0xC0 bootloader jump
+
+The module answers an opcode it does not know with a bare `00` payload. The battery, barcode, buzzer, LED and idle sleep subs of 0xE4, the 0xE9 collected tag storage and the 0xF0 settings family all get that `00` on the UR4, so they belong to other Chainway hardware. 0x6A and 0x6C get no answer at all.
+
+### Boot console
+
+At power-on and after 0x68 the reader prints plain text at 115200 on the RS-232 port, interleaved with nothing else:
+
+```
+----Enter Bootloader Ver:1.2.1  2023-02-07........
+Local IP:       192.168.99.202
+LocalSubnetMask:255.255.255.0
+LocalGateway:   192.168.99.1
+Local port:     8888
+LocalMAC:       00-58-34-00-2C-00
+Target IP:      192.168.99.65
+Target port:    9999
+Goto Application........
+..................Application Program..................
+BaudRate:115200
+AntennaNumber==0x00 Version_Master=0
+```
+
+The application then repeats the network block and prints `Wire break ......` when no Ethernet cable is connected. The bootloader fields match the 0xF0 TLV items one for one, so 0xF0 is the bootloader's settings interface. A client that connects during boot sees these lines as non-frame bytes, which the framing state machine discards.
+
+### Behavior
+
+- After a successful 0xA1 set of the reader address, destination address, work mode, buzzer or trigger parameters, the reader drops every request for 0.54 seconds, measured over 15 samples within 0.01 seconds. Dropped requests are never answered later. 0xA1 sub 09 GPO set and the saved non-0xA1 writes cause no such window. The client waits 0.7 seconds after those subs before sending the next request
+- 0xA1 sub 11 and 12, buzzer volume, are never answered
+- 0xA1 sub 09 GPO set is acknowledged for every combination. Sub 0A reads the trigger inputs, not the outputs, so the outputs cannot be read back
+- 0x10 set power with one antenna record writes that antenna, plus every higher antenna that has not been written on its own since the last factory restore. From factory defaults, a write to antenna 1 therefore reaches all four. One frame can carry all four records and sets each antenna to its own value
+- 0x22 Gen2 parameters round-trip all four bytes exactly, `45 42 CB 5B` written and read back, so the response carries no status byte
+- 0x72 inventory mode answers `01 mode userAddr userLen` followed by four `00` bytes. 0x66 fast inventory mode answers `01 enable` followed by a constant `01 02 02`
+- 0x08 verify voltage answers a constant `01 01 A9 EC`, unit unknown
+- 0x38 temperature protect set answers `01 00`, 0x3A get answers `00`, so the value cannot be read back. 0x3C and 0x3E module work time and 0x1A module parameter answer `00`
 - 0x4A antenna work time with the save bit set is rejected with `00`, the volatile form works
-- 0x06 set protocol type is rejected with `00`, 0x6A and 0x6C dual single mode are never answered, 0xB2 dwell time is rejected with `00`, 0x38 and 0x3C module values answer `00`
-- 0x68 software reset is answered, the link survives. 0x74 restores every module setting to the defaults and keeps the reader and destination network addresses
+- 0x06 set protocol type is rejected with `00`, 0xB2 dwell time is rejected with `00`
+- Without an antenna, 0x80 single inventory and 0x82 start inventory are silent, no error frame. 0x24 carrier wave is acknowledged and transmits into the open port
 - The fixed frequency table clears at a power cycle
-- Get firmware version, STM32 version, hardware version, device ID, temperature, antenna state, return loss, Gen2 parameters, RF link, FastID, TagFocus, inventory mode, antenna mask, work mode, buzzer state, trigger config and the reader addresses all answer as documented. Module-level commands 0x04, 0x16, 0x26 and 0x68 are forwarded by the UR4 firmware
+- Requests framed with `C8 8C` are accepted, and the reply carries the header of the request
+- The reader enforces no heartbeat: after 60 seconds without any traffic it answers normally
+- An unplugged USB adapter surfaces on macOS as a read error, `OSError(6, 'Device not configured')`, within a second
 
 ## Open items
 
@@ -517,24 +554,22 @@ Observed on a UR4 over RS-232 at 115200 in October 2026, no antenna connected un
 - The Java SDK (`SocketManageUR4`, unchanged from 2024 to 2025) sends get-version every 2000 ms when idle. During a scan it sends the bare `00` byte after 5000 ms of silence and then every 2000 ms, and a failed send drops the link. On an idle link it drops after more than 30 failed reads about 100 ms apart plus 10000 ms of silence. The 2022 jar has no scan-time heartbeat. Neither Java nor Android timing matches a single set of values
 - The Android SDK socket layer measures silence from the last inbound byte. After 5 seconds it sends the heartbeat, get-version when idle and the bare byte `00` during inventory, and repeats it about every 3 seconds while the silence lasts. It drops the link after 20 seconds of silence. Its connect timeout is 5000 ms, its read timeout 500 ms, and it sends stop inventory 100 ms after a successful connect
 - The DLL has no keepalive on TCP or serial. Its only heartbeat is the USB poll `A5 5A 00 08 EB E3 0D 0A` while no inventory runs, so the 5 and 20 second maintenance intervals do not come from the vendor DLL. The DLL's stop routine resends the stop frame every 100 ms for up to 1000 ms until the 0x8D reply arrives
-- Whether the reader enforces the heartbeat or keepalive intervals, or whether they are purely client-side library behavior
 - Whether a 0x83 frame can carry more than one record. Both pure-Java SDKs parse exactly one record per frame, and the 0xE0 batch exists for the multi-record case
 - Error payload values beyond `01`, `01 00` and the documented `01` and `22` tag error flags, no SDK decodes them
 - The meaning of the leading `00` in the 0x52 RF link payload
 - The 0x4A work time save flag reading, inferred from the AAR and jar disagreement. Firmware 7.40.1 rejects the save form, which supports the high nibble reading
 - The 0xE2 request tail
-- The 0xF0 user settings semantics beyond the shapes listed above, and the whole 0xF0 boot loader family on the UR4
 - Antenna work time unit, the idle sleep time unit, and the inventory modes 3, 10, 14 and 15 from the parser constants
 - The volume subs 11 and 12: firmware 7.40.1 never answers them, so the bare `01` versus echo question stays open for other firmware
-- Whether the flash storage commands 0xE9 and 0xEB apply to the UR4
-- Which header the reader answers with, `A5 5A` or `C8 8C`. Firmware 7.40.1 answers `A5 5A` throughout, other firmware is untested
 - The 4096 versus 2048 length window: the Java SDKs and the Android native receiver cap at 2048, the Linux and Windows native library at 4096
 - The unit of the 16-bit phase value in the phase reporting record
 - The `27 10` start inventory payload seen in a third-party client
 - Whether 0x8E and 0x9F are forwarded by the UR4 firmware, the other module-level commands are verified
-- Whether 0x74 factory-resets or soft-resets the UR4. Firmware 7.40.1 resets the module settings and keeps the network addresses, which matches the factory reset reading
 - The block permalock mask bytes on the permalock form
 - RS-485 variants, if the specific unit has one: half-duplex direction control is outside the protocol
+- Which rate the module uses for internal baud code 0x01. It is outside every rate the mainboard probes, and a host-side sweep cannot see it because the mainboard sits in between
+- Whether the mainboard keeps the 0xA1 buzzer and trigger settings across a power cycle. They read back as defaults after one, but the module was unreachable at the time
+- The meaning of the voltage value `A9 EC` and of the `01 02 02` tail of the 0x67 fast inventory reply
 
 ## Decompiled source locations
 
