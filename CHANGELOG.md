@@ -11,17 +11,26 @@ Before 1.0, breaking changes ship as minor bumps.
 ### Bug Fixes
 
 - Fire the connection-lost callback once and outside the close wait
+- Wait out the reader's mute window after a configuration write
+- Report OS-level link failures as ChainwayConnectionError
+- Refuse internal baud codes outside UartBaudRate
 
 ### Documentation
 
 - Correct the readme scope table and protocol gaps
 - Align the guides with the current client api
 - Record firmware 7.40.1 live verification in the protocol trail
+- Correct the device ID, reset and GPI docstrings from live findings
+- Map the UR4 mainboard and module split and the boot console
 
 ### Features
 
 - Export SensorSubcommand
 - Add UART baud rate get and set commands
+
+### Maintenance
+
+- Update the changelog
 
 ## [0.2.0] - 2026-10-04
 
