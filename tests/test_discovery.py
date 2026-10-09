@@ -1,6 +1,7 @@
 """UDP discovery tests over the loopback interface."""
 
 import asyncio
+import inspect
 import socket
 
 from chainway_serial import DiscoveredReader, discover_readers
@@ -44,6 +45,11 @@ async def test_discover_readers_accepts_padded_packets() -> None:
 async def test_discover_readers_returns_empty_without_broadcasts() -> None:
     port = free_udp_port()
     assert await discover_readers(listen_seconds=0.05, port=port) == []
+
+
+def test_default_listen_window_covers_one_broadcast_interval() -> None:
+    default = inspect.signature(discover_readers).parameters["listen_seconds"].default
+    assert default > 10.0
 
 
 async def test_discovery_endpoint_reports_delivery_errors() -> None:

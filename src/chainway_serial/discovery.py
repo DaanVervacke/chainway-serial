@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from .const import DISCOVERY_PACKET_SIZE, UDP_DISCOVERY_PORT
+from .const import DISCOVERY_LISTEN_SECONDS, DISCOVERY_PACKET_SIZE, UDP_DISCOVERY_PORT
 from .models import DiscoveredReader
 
 _LOGGER = logging.getLogger(__name__)
@@ -33,19 +33,22 @@ class _DiscoveryProtocol(asyncio.DatagramProtocol):
 
 async def discover_readers(
     *,
-    listen_seconds: float = 5.0,
+    listen_seconds: float = DISCOVERY_LISTEN_SECONDS,
     port: int = UDP_DISCOVERY_PORT,
 ) -> list[DiscoveredReader]:
     """Listen for reader discovery broadcasts and return what answered.
 
     The reader sends a 12-byte packet with its MAC address, IPv4
-    address and TCP port to the discovery port. Both SDKs accept
-    longer packets and read the first 12 bytes, so the listener does
-    the same. It runs for ``listen_seconds`` seconds, collects one
-    entry per unique reader, and returns them sorted by address.
+    address and TCP port to the discovery port every 10 seconds. Both
+    SDKs accept longer packets and read the first 12 bytes, so the
+    listener does the same. It runs for ``listen_seconds`` seconds,
+    collects one entry per unique reader, and returns them sorted by
+    address.
 
     Args:
-        listen_seconds: Seconds to listen before returning.
+        listen_seconds: Seconds to listen before returning. The
+            default of 12 seconds covers one full broadcast interval.
+            A window shorter than 10 seconds can miss a reader.
         port: UDP port to listen on.
 
     Returns:

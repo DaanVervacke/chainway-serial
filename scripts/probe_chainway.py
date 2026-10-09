@@ -155,7 +155,7 @@ async def probe_inventory(client: ChainwayClient, seconds: float) -> list[dict[s
 async def main() -> None:
     """Connect, probe every command, and write the captures."""
     if len(sys.argv) < 2:
-        readers = await discover_readers(listen_seconds=5.0)
+        readers = await discover_readers()
         for reader in readers:
             print(f"discovered {reader.mac} at {reader.ip}:{reader.port}")
         print("pass a serialx URL, for example socket://192.168.99.200:8888")
