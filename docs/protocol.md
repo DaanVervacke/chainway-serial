@@ -114,8 +114,8 @@ Power values on the wire are centi-dBm, big-endian, so 30 dBm = 0x0BB8.
 |---|---|---|---|
 | 0x14 | `01 f2 f1 f0` | 0x15, payload `01` | Set fixed frequency, value in kHz, 3-byte big-endian, for example 920125. The leading `01` is the number of frequency points, only one is supported. The setting is volatile and clears at a power cycle |
 | 0x16 | empty | 0x17, payload `count` then `count` times 3 bytes | Get the fixed frequency table, values in kHz, 3-byte big-endian |
-| 0x1C | `code` | 0x1D, payload `01` or `00` | Set the baud rate of the internal UART between the UR4 mainboard and the UHF module, one code byte, applied at the next power cycle and persistent. The module accepts codes 0x01, 0x02 and 0x03 and rejects every other code with `00`. 0x02 is 115200 and 0x03 is 460800: the mainboard follows both, so the host port moves with them. The mainboard does not know 0x01: after a reboot it stays at 115200, the module runs at the code 0x01 rate, and every module command goes unanswered. **Never send 0x01**, the module is then unreachable from the host. The vendor SDKs only allow 0x02 and 0x03. Frames: `A5 5A 00 09 1C 02 17 0D 0A` answered by `A5 5A 00 09 1D 01 15 0D 0A` |
-| 0x1E | empty | 0x1F, payload `01 code` | Get the pending internal baud rate code, answered by the module. Frames: `A5 5A 00 08 1E 16 0D 0A` answered by `A5 5A 00 0A 1F 01 02 16 0D 0A` |
+| 0x1C | `code` | 0x1D, payload `01` or `00` | Set the baud rate of the internal UART between the UR4 mainboard and the UHF module, one code byte, applied at the next power cycle and persistent. The module accepts codes 0x01, 0x02 and 0x03 and rejects every other code with `00`. 0x02 is 115200 and 0x03 is 460800: the mainboard follows both, so the host port moves with them. Code 0x01 is 57600, measured on the internal UART over SWD. The mainboard does not know 0x01: after a reboot it stays at 115200, the module runs at 57600, and every module command goes unanswered. **Never send 0x01**, the module is then unreachable from the host. Recovery needs debug access to the mainboard, see "Recovery from internal baud code 0x01". The vendor SDKs only allow 0x02 and 0x03. Frames: `A5 5A 00 09 1C 02 17 0D 0A` answered by `A5 5A 00 09 1D 01 15 0D 0A` |
+| 0x1E | empty | 0x1F, payload `01 code` | Get the pending internal baud rate code, answered by the module. Frames: `A5 5A 00 08 1E 16 0D 0A` answered by `A5 5A 00 0A 1F 01 02 16 0D 0A`, or by `A5 5A 00 0A 1F 01 01 15 0D 0A` when code 0x01 is stored |
 | 0x2C | `save region` | 0x2D, payload `01` | Set frequency region. `save` 0 or 1. Region: see the table below |
 | 0x2E | empty | 0x2F, payload `01 region` | Get frequency region |
 | 0x24 | `on` | 0x25, payload `01` | Set continuous carrier wave, 0 off, 1 on |
@@ -509,6 +509,27 @@ The UR4 is an STM32 mainboard in front of a UHF module. The mainboard answers a 
 
 The module answers an opcode it does not know with a bare `00` payload. The battery, barcode, buzzer, LED and idle sleep subs of 0xE4, the 0xE9 collected tag storage and the 0xF0 settings family all get that `00` on the UR4, so they belong to other Chainway hardware. 0x6A and 0x6C get no answer at all.
 
+### Mainboard internals
+
+Read over SWD from the mainboard, an STM32F2 (device ID 0x411, 512 KiB flash, read protection level 0) with a 120 MHz core, APB1 at 30 MHz and APB2 at 60 MHz. The debug header carries `3V3 DIO CLK RST GND`. The bootloader sits at 0x08000000 and the application at 0x08010000.
+
+- USART3 on PB10 and PB11 is the RS-232 host port. USART1 on PA9 (TX) and PA10 (RX) is the internal link to the module. PA8 is driven low during GPIO setup and set high 50 ms after PD14, so it is most likely the module reset or enable line. Ethernet is an SPI chip on SPI1 (PA5 to PA7, chip select PA4). The firmware strings name it W5500
+- At boot the application sends get-version `A5 5A 00 08 02 0A 0D 0A` to the module at 460800 first and then at 115200. It keeps the first rate that gets an answer and falls back to 115200. The host port then runs at the same rate. The firmware contains no other module rate, which is why the mainboard cannot follow code 0x01
+- The application keeps the chosen rate at 0x20000014 and the probe result at 0x20000009, where 0 means no answer and a working module leaves its major firmware version (0x07)
+- The 0xA1 sub 09 GPO outputs drive PD7, PD6 and PB4. PD13 is a status LED
+
+### Recovery from internal baud code 0x01
+
+Done once on the development unit in October 2026, see `captures/swd/` for the frames and scripts.
+
+1. Connect an SWD probe to the mainboard header and halt the core. Set DBGMCU_APB1_FZ (0xE0042008) to 0x1800 so the watchdogs stop while halted. A halted core keeps the firmware from rewriting USART1.
+2. Set USART1 BRR (0x40011008) to 0x412 for 57600 at 60 MHz. Send bytes by writing USART1 DR (0x40011004) after TXE. Capture the replies with DMA2 stream 2 channel 4 from USART1 DR into RAM, because polling RXNE over SWD is too slow.
+3. Check with 0x1E: `A5 5A 00 08 1E 16 0D 0A` answered by `A5 5A 00 0A 1F 01 01 15 0D 0A`.
+4. Send `A5 5A 00 09 1C 02 17 0D 0A`, answered by `A5 5A 00 09 1D 01 15 0D 0A`. 0x1E now answers `A5 5A 00 0A 1F 01 02 16 0D 0A`.
+5. Reset the mainboard through SWD. The boot probe finds the module at 115200.
+
+At 57600 get-version answers `A5 5A 00 0B 03 07 28 01 26 0D 0A`, firmware 7.40.1. The module RX line has no pull-up on the mainboard side. With the module unplugged, PA10 floats and USART1 picks up crosstalk from its own TX at every rate. Such partial echoes are not module traffic. A connected module holds PA10 high against the internal pull-down.
+
 ### Boot console
 
 At power-on and after 0x68 the reader prints plain text at 115200 on the RS-232 port, interleaved with nothing else:
@@ -567,7 +588,6 @@ The application then repeats the network block and prints `Wire break ......` wh
 - Whether 0x8E and 0x9F are forwarded by the UR4 firmware, the other module-level commands are verified
 - The block permalock mask bytes on the permalock form
 - RS-485 variants, if the specific unit has one: half-duplex direction control is outside the protocol
-- Which rate the module uses for internal baud code 0x01. It is outside every rate the mainboard probes, and a host-side sweep cannot see it because the mainboard sits in between
 - Whether the mainboard keeps the 0xA1 buzzer and trigger settings across a power cycle. They read back as defaults after one, but the module was unreachable at the time
 - The meaning of the voltage value `A9 EC` and of the `01 02 02` tail of the 0x67 fast inventory reply
 
