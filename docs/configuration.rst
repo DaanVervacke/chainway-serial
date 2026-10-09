@@ -55,7 +55,9 @@ Resets
 ``software_reset`` reboots the reader, which takes about two seconds.
 ``restore_factory_settings`` resets the RF settings, and also turns the
 buzzer back on and returns the trigger parameters and the work mode to
-their defaults. The reader and destination network addresses stay.
+their defaults. It also sets the reader address back to
+192.168.99.202, port 8888, right away. Over TCP on any other address
+the link drops and the reader is only reachable on the factory address.
 
 Gen2 parameters
 ---------------

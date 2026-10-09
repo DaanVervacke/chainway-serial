@@ -135,7 +135,7 @@ Power values on the wire are centi-dBm, big-endian, so 30 dBm = 0x0BB8.
 | 0x64 | `save enable 00` | 0x65, payload `01` | Set fast inventory mode. `save` 0 or 1, semantics of the mode **unverified** |
 | 0x66 | `00 00` | 0x67, payload `01 enable` | Get fast inventory mode |
 | 0x68 | empty | 0x69, payload `01` | Software reset. On the UR4 the mainboard answers it and then reboots the whole reader, bootloader banner included. A serial link through a USB adapter stays open across the reboot |
-| 0x74 | empty | 0x75, payload `01` | Restore factory settings, forwarded to the UHF module. It resets the module settings. On the UR4 the mainboard also resets its own settings: the buzzer turns back on, the trigger parameters return to their defaults and the work mode returns to command mode. The reader and destination network addresses stay as they are |
+| 0x74 | empty | 0x75, payload `01` | Restore factory settings, forwarded to the UHF module. It resets the module settings. On the UR4 the mainboard also resets its own settings: the buzzer turns back on, the trigger parameters return to their defaults and the work mode returns to command mode. The reader address returns to 192.168.99.202, port 8888, mask 255.255.255.0, gateway 192.168.99.1, and takes effect at once without a reboot |
 
 Frequency regions, from the official protocol document:
 
@@ -383,7 +383,7 @@ The official protocol document V2.1.2 describes the UHF module protocol, one lay
 The deltas between the two layers:
 
 - The document's examples all use the `C8 8C` header.
-- At module level 0x68 is the software reset and 0x74 the factory reset, while the 2024 Java SDK knows only 0x74 and calls it the soft reset. The 2025 Java SDK has both, 0x68 as `uhfReset` and 0x74 renamed `factoryReset`. The Android native libraries `libDeviceAPIM.so` and `libDeviceAPIQ.so` (DeviceAPI 20250209) build 0x68 as their soft reset frame, `A5 5A 00 08 68 60 0D 0A`, and contain no 0x74 builder. The library implements both commands per the document. On the UR4, firmware 7.40.1 treats 0x74 as the factory reset of the module settings and of the mainboard buzzer, trigger parameters and work mode, and keeps the network addresses, and the mainboard answers 0x68 by rebooting the whole reader
+- At module level 0x68 is the software reset and 0x74 the factory reset, while the 2024 Java SDK knows only 0x74 and calls it the soft reset. The 2025 Java SDK has both, 0x68 as `uhfReset` and 0x74 renamed `factoryReset`. The Android native libraries `libDeviceAPIM.so` and `libDeviceAPIQ.so` (DeviceAPI 20250209) build 0x68 as their soft reset frame, `A5 5A 00 08 68 60 0D 0A`, and contain no 0x74 builder. The library implements both commands per the document. On the UR4, firmware 7.40.1 treats 0x74 as the factory reset of the module settings and of the mainboard buzzer, trigger parameters, work mode and reader address, and the mainboard answers 0x68 by rebooting the whole reader
 - Tag operation error responses carry an error flag after the success flag: 0x01 means the operation failed and 0x22 means the tag could not be recognized.
 - The document defines 0x26 as get return loss. The 2024 Java SDK and the older native libraries read the first payload byte of the 0x27 response as a carrier wave on/off state, which is the port-1 number of the return loss layout. The library follows the document. The 2025 Java SDK implements the V2.1.2 meaning, return loss as `port loss` pairs, and also parses 0x4F with `payload[1]` bit 0 as ANT1 through bit 7 as ANT8 and `payload[0]` as ANT9 to ANT16. The 2024 Java SDK compared the wrong values for ANT5 to ANT16 and never decoded them.
 - Commands 0xA1 through 0xFF are reserved at module level. The reader protocol uses them: the 0xA1 configuration family, the 0xE4 peripherals and the 0xE0 collected tag pull exist only at reader level.
@@ -478,7 +478,7 @@ The Windows DLL exposes a different, length-prefixed layout to applications thro
 
 ## UDP device discovery
 
-The reader broadcasts a 12-byte UDP packet to port 1111:
+The reader broadcasts a 12-byte UDP packet to port 1111 every 10 seconds, measured live on the UR4. The library listens for 12 seconds by default so one window covers a full interval:
 
 ```
 MAC(6) | IPv4(4) | TCP port(2, big-endian)
@@ -556,6 +556,14 @@ The application then repeats the network block and prints `Wire break ......` wh
 ### Behavior
 
 - After a successful 0xA1 set of the reader address, destination address, work mode, buzzer or trigger parameters, the reader drops every request for 0.54 seconds, measured over 15 samples within 0.01 seconds. Dropped requests are never answered later. 0xA1 sub 09 GPO set and the saved non-0xA1 writes cause no such window. The client waits 0.7 seconds after those subs before sending the next request
+- A 0xA1 sub 01 reader address set takes effect at the next reboot. The set `A5 5A 00 17 A1 01 C0 A8 01 CA 22 B8 FF FF FF 00 C0 A8 01 01 19 0D 0A` (192.168.1.202, port 8888, mask 255.255.255.0, gateway 192.168.1.1) is acknowledged with `A2 01`, and sub 02 reads the new values back at once, but the reader stays unreachable on the new address for at least 15 seconds. After 0x68 it accepts TCP connections on the new address about 11 seconds after the reset
+- The TCP server on port 8888 serves one client. A second connection is accepted and from then on gets every answer. The first socket receives nothing, no FIN arrives, and its next write is answered with a TCP reset
+- Some fresh TCP connections are dead from the start: 2 of 40 and 4 of 60 connect cycles. The connect succeeds, the stop inventory sent on connect gets no answer within 2 seconds, and the first request after that is answered with a TCP reset. The pause since the previous close makes no clear difference: 1 of 20 with no pause, 3 of 20 after 1 second and 0 of 20 after 2 seconds. The client opens such a link again and resends the request once, as long as the link never answered anything
+- Serial and TCP work side by side. Every answer and every tag frame of a scan goes to the link that sent the request
+- A new TCP connection produces an unrequested `A5 5A 00 09 8D 01 85 0D 0A` stop answer about 0.2 seconds later. It goes to the link that spoke last, which can be the serial port. Whether the reader also stops a running inventory at that moment is **unverified**
+- 0x68 over TCP is acknowledged with `69 01`, after which the socket stays silent: no FIN and no reset arrive within 30 seconds. A new connection works again about 31 seconds after the reset was sent
+- With the Ethernet cable pulled, requests time out and the host operating system ends the socket with ETIMEDOUT after about 18 seconds of unanswered retransmissions. Connect attempts fail after about 10 seconds each until the cable is back. The next connect after the replug succeeds without any action on the reader
+- The reader broadcasts its 12-byte discovery packet to UDP port 1111 every 10 seconds, from source port 8888, for example `00 58 34 00 2C 00 C0 A8 01 CA 22 B8`
 - 0xA1 sub 11 and 12, buzzer volume, are never answered
 - 0xA1 sub 09 GPO set is acknowledged for every combination. Sub 0A reads the trigger inputs, not the outputs, so the outputs cannot be read back
 - 0x10 set power with one antenna record writes that antenna, plus every higher antenna that has not been written on its own since the last factory restore. From factory defaults, a write to antenna 1 therefore reaches all four. One frame can carry all four records and sets each antenna to its own value
@@ -577,7 +585,7 @@ The application then repeats the network block and prints `Wire break ......` wh
 - The reader enforces no heartbeat: after 60 seconds without any traffic it answers normally
 - An unplugged USB adapter surfaces on macOS as a read error, `OSError(6, 'Device not configured')`, within a second
 - 0x74 factory restore answers `01` about 0.6 seconds after the request, then the module drops every request for up to 1.5 seconds after that answer. The client waits 1.5 seconds after the answer before the next request
-- 0x74 also resets the mainboard: a buzzer set off with 0xA1 sub 07 reads on again, a trigger work time of 2000 ms returns to 1000 ms and trigger work mode returns to command mode. The reader and destination network addresses are unchanged. 0x68 software reset keeps the buzzer setting. With the buzzer off, scans and single inventories are silent
+- 0x74 also resets the mainboard: a buzzer set off with 0xA1 sub 07 reads on again, a trigger work time of 2000 ms returns to 1000 ms and trigger work mode returns to command mode. The reader address returns to 192.168.99.202 with gateway 192.168.99.1. Sub 02 reads the factory address right after the 0x75 answer, the reader stops answering TCP on the old address and broadcasts discovery packets from 192.168.99.202 at once, before any reboot. An earlier run that reported the addresses unchanged started from the factory address and could not see the reset. Whether 0x74 resets the destination address is **unverified**, it held its factory value 192.168.99.65:9999 throughout. 0x68 software reset keeps the buzzer setting. With the buzzer off, scans and single inventories are silent
 - 0xA1 sub 05 work mode switches to auto and back to command over serial without trouble
 - A scan left running by a closed connection keeps streaming. The next connection receives those records, and a scan started with other reporting flags then misreads them. Stop inventory answers `01` on an idle reader too, and a request sent right after the stop answer is served. The client sends stop inventory on every connect, like the Android SDK, and drops the tag records that arrive before the answer
 

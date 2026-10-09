@@ -871,9 +871,10 @@ class ChainwayClient:
 
         On a UR4 the mainboard also resets its own settings: the buzzer
         turns back on, the trigger parameters return to their defaults
-        and the work mode returns to command mode. The reader and
-        destination network addresses stay as they are. The SDKs call
-        the same opcode the soft reset.
+        and the work mode returns to command mode. The reader address
+        returns to 192.168.99.202, port 8888, at once, so a TCP link
+        to any other address drops. The SDKs call the same opcode the
+        soft reset.
         The module drops every request for about 1.5 seconds after the
         acknowledgement, so the next command waits that long.
         """
