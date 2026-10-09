@@ -83,12 +83,14 @@ class ProtocolType(IntEnum):
 
 
 class UartBaudRate(IntEnum):
-    """UART baud rate code, payload byte of commands 0x1C and 0x1E.
+    """Baud rate code of the internal UART, payload byte of 0x1C and 0x1E.
 
-    The reader answers with the pending code but keeps talking at the
-    current rate until the next power cycle, and the setting persists
-    across power loss. Codes 0x02 and 0x03 are verified on UR4
-    firmware 7.40.1, the vendor SDKs reject every other code.
+    The code sets the link between the UR4 mainboard and its UHF
+    module. The mainboard follows codes 0x02 and 0x03, so the host
+    port moves with them at the next power cycle. The module also
+    accepts code 0x01, which the mainboard does not follow: the module
+    then becomes unreachable from the host. This enum leaves 0x01 out
+    on purpose.
     """
 
     BAUD_115200 = 0x02

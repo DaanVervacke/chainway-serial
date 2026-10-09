@@ -616,13 +616,19 @@ class ChainwayClient:
         return unpack_gen2_parameters(payload)
 
     async def set_uart_baudrate(self, baudrate: UartBaudRate) -> None:
-        """Set the UART baud rate, applied at the next reader power cycle.
+        """Set the internal UART baud rate, applied at the next power cycle.
 
-        The reader acknowledges the command but keeps talking at the
-        current rate until it reboots. The setting persists across
-        power loss. Verified on UR4 firmware 7.40.1.
+        The code sets the link between the mainboard and the UHF module,
+        and the mainboard moves the host port with it. The reader keeps
+        talking at the current rate until it reboots, and the setting
+        persists across power loss.
+
+        Raises:
+            ValueError: The code is not a :class:`UartBaudRate` member.
+                Other codes the module accepts leave it unreachable.
         """
-        response = await self._request(Command.SET_UART_BAUDRATE, bytes((baudrate,)))
+        code = UartBaudRate(baudrate)
+        response = await self._request(Command.SET_UART_BAUDRATE, bytes((code,)))
         _require_ack(response, Command.SET_UART_BAUDRATE)
 
     async def get_uart_baudrate(self) -> UartBaudRate:
