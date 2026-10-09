@@ -72,7 +72,8 @@ Receiver state machine, as implemented by the SDKs: hunt for `A5`, expect `5A`, 
 
 - A response frame carries command = request command + 1. Request 0x02, response 0x03. Request 0x8C, response 0x8D.
 - Set operations answer with payload `01` on success. Set operations that report an error code answer with a non-`01` payload, exact codes **unverified**.
-- Tag operations answer with payload `01 00` on success. The second byte is the error flag: `01` means the operation failed and `22` means the tag could not be recognized, per the official protocol document. Other codes are **unverified**.
+- Tag operations answer with payload `01 00` on success. A failure answers `00 code`, read failures append `00 00`. Firmware 7.40.1 returns two codes with real tags: `01` when the tag rejects the operation, for locked memory, a wrong password or a command the chip lacks, and `22` when no tag matches the filter or the word window runs past the end of the bank. Other codes are **unverified**.
+- The UHF module answers an opcode it does not support with a bare `00` payload. The client raises `ChainwayUnsupportedCommandError` for that reply on the commands where firmware 7.40.1 returns it.
 - Commands in the 0xA1 configuration family carry a subcommand in payload byte 0. Set operations answer with payload `01`. Get operations echo the subcommand number in payload byte 0, followed by the requested values.
 - Commands 0x06 and 0x70 carry an operation selector in payload byte 0, see the tables below.
 - The SDKs wait up to 2000 ms for a response.
@@ -119,7 +120,7 @@ Power values on the wire are centi-dBm, big-endian, so 30 dBm = 0x0BB8.
 | 0x2C | `save region` | 0x2D, payload `01` | Set frequency region. `save` 0 or 1. Region: see the table below |
 | 0x2E | empty | 0x2F, payload `01 region` | Get frequency region |
 | 0x24 | `on` | 0x25, payload `01` | Set continuous carrier wave, 0 off, 1 on |
-| 0x26 | empty | 0x27, payload `port loss` pairs | Get the return loss of every port in dB, one port number and one loss byte per port. A loss of 0 means the port is not enabled, or has no antenna connected on a single-port module. Both Java SDKs read payload byte 0 of this response as a carrier wave on/off state, which is the port-1 number of the return loss layout, so this library follows the official protocol document. **unverified** |
+| 0x26 | empty | 0x27, payload `port loss` pairs | Get the return loss of every port in dB, one port number and one loss byte per port. A loss of 0 means the port is not enabled, or has no antenna connected on a single-port module. Both Java SDKs read payload byte 0 of this response as a carrier wave on/off state, which is the port-1 number of the return loss layout. Firmware 7.40.1 confirms the protocol document: port 1 reads 1 to 2 dB with the jack open and 10 to 16 dB with an antenna, ports 2 to 4 read 0. Example `A5 5A 00 10 27 01 10 02 00 03 00 04 00 23 0D 0A`, port 1 at 16 dB |
 | 0x20 | 4 bytes, see below | 0x21, payload `01` | Set Gen2 parameters |
 | 0x22 | empty | 0x23, payload 4 bytes | Get Gen2 parameters, same packing as the request |
 | 0x52 | `00 save mode` | 0x53, payload `01` | Set recommended RF link combination. Mode: see the table below. Leading `00` constant, meaning **unverified** |
@@ -189,18 +190,18 @@ Semantics from the DLL document: target 0 to 4 for S0 to S3 and SL, action 0 to 
 
 | Command | Request payload | Response | Meaning |
 |---|---|---|---|
-| 0x70 | `save mode userAddr userLen` | 0x71, payload `01` | Select inventory mode. Mode 0 = EPC only, mode 1 = EPC and TID, mode 2 = EPC, TID and USER. `userAddr` is the USER start address in 16-bit words, `userLen` the USER read length in words. TID is a fixed 12 bytes when present. The parser source also knows mode 10 = EPC and RESERVED, 14 = LED tag and 15 = temperature tag, support on UR4 **unverified** |
+| 0x70 | `save mode userAddr userLen` | 0x71, payload `01` | Select inventory mode. Mode 0 = EPC only, mode 1 = EPC and TID, mode 2 = EPC, TID and USER. `userAddr` is the USER start address in 16-bit words, `userLen` the USER read length in words. TID is a fixed 12 bytes when present. The parser source also knows mode 10 = EPC and RESERVED, 14 = LED tag and 15 = temperature tag. Firmware 7.40.1 accepts mode 10 and reads it back, but its records carry the EPC only. Modes 14 and 15 are **unverified** |
 | 0x70 | `00 00 00 00` | 0x71, payload `01` | Shorthand for mode 0 without saving |
 | 0x72 | `00 00` | 0x73, payload `01 mode userAddr userLen` | Get inventory mode |
 | 0x6E | `save bank ptrHi ptrLo cntHi cntLo data...` | 0x6F, payload `01` | Set tag filter. Bank 1 = EPC, 2 = TID, 3 = USER. `ptr` is the bit offset of the match, `cnt` the match length in bits, `data` the match bytes, ceil(cnt / 8) of them. A zero bit length clears the filter and carries no data bytes, 6 payload bytes total |
-| 0x80 | `00 64` | 0x81, one tag record | Single inventory. Returns at most one tag record in the response, and none when no tag is found. The official protocol document calls the two payload bytes reserved and its example sends `00 00`, both SDKs send `00 64` and their demos run on real hardware, so this library keeps the SDK bytes. Semantics **unverified** |
-| 0x82 | `Num1 Num0` | none, stream begins | Start continuous inventory. The official protocol document defines the two payload bytes: `00 00` for a normal scan, `FF FF` for phase reporting, where every 0x83 record carries a 2-byte phase in degrees between the EPC and the RSSI pair. The SDKs send `00 00` for a normal scan. The 2025 Java SDK (`ReaderAPI20250926.jar`) adds `FF FE` for frequency point reporting only and `FF FD` for phase and frequency point together, see the tag record. Example `FF FE`: `A5 5A 00 0A 82 FF FE 89 0D 0A`. Example `FF FD`: `A5 5A 00 0A 82 FF FD 8A 0D 0A`. A third-party Node client sends `27 10`, meaning **unverified** |
+| 0x80 | `00 64` | 0x81, one tag record | Single inventory. Returns at most one tag record in the response, and none when no tag is found. The official protocol document calls the two payload bytes reserved and its example sends `00 00`, both SDKs send `00 64` and their demos run on real hardware, so this library keeps the SDK bytes. Firmware 7.40.1 answers `00 00`, `00 0A`, `01 64` and `00 64` alike with one tag record, the bytes have no visible effect. The record carries the TID when the inventory mode selects it |
+| 0x82 | `Num1 Num0` | none, stream begins | Start continuous inventory. The official protocol document defines the two payload bytes: `00 00` for a normal scan, `FF FF` for phase reporting, where every 0x83 record carries a 2-byte phase in degrees between the EPC and the RSSI pair. The SDKs send `00 00` for a normal scan. The 2025 Java SDK (`ReaderAPI20250926.jar`) adds `FF FE` for frequency point reporting only and `FF FD` for phase and frequency point together, see the tag record. Example `FF FE`: `A5 5A 00 0A 82 FF FE 89 0D 0A`. Example `FF FD`: `A5 5A 00 0A 82 FF FD 8A 0D 0A`. A third-party Node client sends `27 10`, which firmware 7.40.1 treats as `00 00`. With `FF FF` alone the records leave out the TID and USER blocks even in an EPC and TID mode, `FF FD` keeps them |
 | 0x8C | empty | 0x8D, payload `01` | Stop continuous inventory |
 | 0x83 | reader to host only | n/a | One tag sighting per frame, pushed while inventory runs |
 
 ### Tag operations
 
-All tag operation requests share one layout. `password` is 4 bytes big-endian: the access password for read, write, block write, block erase and lock, the kill password for kill. The filter selects a single tag: `bank` 1 = EPC, 2 = TID, 3 = USER, `ptr` is the bit offset of the match, `cnt` the match length in bits, `data` ceil(cnt / 8) match bytes. When `cnt` is 0 the filter is omitted: the request carries `bank = 1, ptr = 0, cnt = 0` and no data bytes, and the reader picks a tag on its own.
+All tag operation requests share one layout. `password` is 4 bytes big-endian: the access password for read, write, block write, block erase and lock, the kill password for kill. The filter selects a single tag: `bank` 0 = RESERVED, 1 = EPC, 2 = TID, 3 = USER, `ptr` is the bit offset of the match, `cnt` the match length in bits, `data` ceil(cnt / 8) match bytes. When `cnt` is 0 the filter is omitted: the request carries `bank = 1, ptr = 0, cnt = 0` and no data bytes, and the reader picks a tag on its own.
 
 ```
 password(4) | bank(1) | ptrHi ptrLo | cntHi cntLo | data(ceil(cnt/8)) | operation tail
@@ -208,16 +209,16 @@ password(4) | bank(1) | ptrHi ptrLo | cntHi cntLo | data(ceil(cnt/8)) | operatio
 
 | Command | Operation tail | Response | Meaning |
 |---|---|---|---|
-| 0x84 | `bank addrHi addrLo lenHi lenLo` | 0x85, payload `01 00 lenHi lenLo data...` | Read from a bank. `bank` 1 = EPC, 2 = TID, 3 = USER, `addr` and `len` in 16-bit words, data is `len * 2` bytes |
+| 0x84 | `bank addrHi addrLo lenHi lenLo` | 0x85, payload `01 00 lenHi lenLo data...` | Read from a bank. `bank` 0 = RESERVED, 1 = EPC, 2 = TID, 3 = USER, `addr` and `len` in 16-bit words, data is `len * 2` bytes. RESERVED holds the kill password in words 0 and 1 and the access password in words 2 and 3. Reading the RESERVED bank of a tag selected by TID: `A5 5A 00 22 84 00 00 00 00 02 00 00 00 60 E2 80 11 70 20 00 11 CD 61 5C 0B 20 00 00 00 00 04 29 0D 0A`, answered `01 00 00 04` and eight data bytes |
 | 0x86 | `bank addrHi addrLo lenHi lenLo data(len*2)` | 0x87, payload `01 00` | Write to a bank, same units as read |
 | 0x93 | `bank addrHi addrLo lenHi lenLo data(len*2)` | 0x94, payload `01 00` | Block write, same layout as write |
 | 0x95 | `bank addrHi addrLo lenHi lenLo` | 0x96, payload `01 00` | Block erase, `len` in words |
 | 0x88 | `lockCode(3)` | 0x89, payload `01 00` | Lock tag memories, see the lock code table |
 | 0x8A | none | 0x8B, payload `01 00` | Kill tag, the password is the kill password. A tag with a zero kill password ignores the command |
 | 0x8E | `dl keyId challenge(10)` | 0x8F, payload `01 00 lenHi lenLo data...` | Authenticate tag, the Gen2 v2.0 Authenticate command. `dl` is the length of KeyID plus Data in bytes, fixed at 11. `keyId` defaults to 0. `challenge` is the ten-byte IChallenge_TAM1 data. The response carries 8 words (16 bytes) of data on success, no data on failure. Only tags that support the command respond |
-| 0x90 | `filter protected(1) shortRange(1)` | `01` expected | Set protected mode and short range mode. Seen only in the 2025 Java SDK, `A5 5A 00 15 90 00 00 00 00 01 00 20 00 10 E2 80 01 00 D7 0D 0A` |
+| 0x90 | `filter protected(1) shortRange(1)` | 0x91, payload `01 00` | Set protected mode and short range mode. Seen only in the 2025 Java SDK, `A5 5A 00 15 90 00 00 00 00 01 00 20 00 10 E2 80 01 00 D7 0D 0A`. Firmware 7.40.1 forwards it and a Monza R6-P answers `01 00` to the off form |
 | 0x97 | `filter bank(1) ptr(2) count(2) data(count*2)` | `01` expected | Margin read in the 2025 Java SDK and in the native `UHF_MarginRead`, `A5 5A 00 1A 97 00 00 00 00 01 00 20 00 10 E2 80 03 00 00 00 01 12 34 FA 0D 0A` |
-| 0x9F | `readLock bank ptrHi ptrLo rangeHi rangeLo [maskHi maskLo]` | 0xA0, payload `01 00 [data...]` | Block permalock operation. `readLock` bit 0 is 0 for a read and 1 for a permalock. `ptr` is the block start address in windows of 16 blocks of 8 bytes, `range` the number of windows. The 16-bit mask selects which of the 16 blocks of a window to permalock. The document's worked example omits the mask for the read form, so the mask bytes on the permalock form are **unverified**. A read response carries `range` words of per-block status bits after the flags, a permalock response carries none. Only tags that support the command respond |
+| 0x9F | `readLock bank ptrHi ptrLo rangeHi rangeLo [maskHi maskLo]` | 0xA0, payload `01 00 [data...]` | Block permalock operation. `readLock` bit 0 is 0 for a read and 1 for a permalock. `ptr` is the block start address in windows of 16 blocks of 8 bytes, `range` the number of windows. The 16-bit mask selects which of the 16 blocks of a window to permalock. The document's worked example omits the mask for the read form, so the mask bytes on the permalock form are **unverified**. A read response carries `range` words of per-block status bits after the flags, a permalock response carries none. Firmware 7.40.1 forwards it, and Monza R6-P and Alien 0x813 tags answer `00 01` |
 
 ### Lock code
 
@@ -258,7 +259,7 @@ Values are hex bit positions. The generator ORs one column per selected bank, th
 | 0xE9 | `01` | 0xEA, payload `cntHi cntLo` | Get count of new collected tags |
 | 0xEB | `FF` | 0xEC, payload `count(1) | count times: [len][record bytes]` | Pull collected tag data from flash. The layout comes from the Android demo decode, the Java jar passes the payload through raw, so it is **unverified** on the UR4 |
 
-The Android SDK inherits the flash commands from the A8 product line. On the UR4 with firmware 7.40.1, 0xE9 gets a bare `00` answer, so the collected tag storage belongs to other hardware. 0xEB is untested.
+The Android SDK inherits the flash commands from the A8 product line. On the UR4 with firmware 7.40.1, 0xE2, 0xE9 and 0xEB get a bare `00` answer and 0xE0 gets no answer, in command work mode and after three seconds of auto work mode alike. Auto work mode sends no tags over the serial port either. The collected tag storage belongs to other hardware.
 
 ### Configuration family, command 0xA1
 
@@ -377,7 +378,7 @@ The newer Android SDK (DeviceAPI 20251103) and Java SDK add commands for Android
 
 ## Module-level protocol
 
-The official protocol document V2.1.2 describes the UHF module protocol, one layer below the reader protocol. The frame format and the tag operation commands are shared, and this library implements the module-level command subset next to the reader protocol. The commands below appear in the document but in none of the two Java SDKs: get device ID (0x04), get fixed frequency (0x16), get return loss (0x26), software reset (0x68), authenticate tag (0x8E) and block permalock (0x9F). The vendor's native Linux library `libTagReader.so` from the UR4 Java demo builds all six, as `UHFGetDeviceID`, `UHFGetJumpFrequency`, `UHFGetCW`, `UHFSetSoftReset`, `UHFAuthenticate` and `UHFBlockPermalock`. Whether the UR4 reader firmware answers them is still **unverified**.
+The official protocol document V2.1.2 describes the UHF module protocol, one layer below the reader protocol. The frame format and the tag operation commands are shared, and this library implements the module-level command subset next to the reader protocol. The commands below appear in the document but in none of the two Java SDKs: get device ID (0x04), get fixed frequency (0x16), get return loss (0x26), software reset (0x68), authenticate tag (0x8E) and block permalock (0x9F). The vendor's native Linux library `libTagReader.so` from the UR4 Java demo builds all six, as `UHFGetDeviceID`, `UHFGetJumpFrequency`, `UHFGetCW`, `UHFSetSoftReset`, `UHFAuthenticate` and `UHFBlockPermalock`. Firmware 7.40.1 answers all six. 0x8E and 0x9F reach the tag, which answers `00 01` when the chip lacks the command.
 
 The deltas between the two layers:
 
@@ -457,7 +458,8 @@ PC(2) | EPC(...) | TID(12, optional) | USER(..., optional) | RSSI(2) | ANT(1)
 - Without a TID block the RSSI pair and the antenna byte sit directly after the EPC, the SDKs have no short TID block
 - RSSI: 16-bit big-endian two's complement of dBm times ten, so raw 0xFD6F = -65.7 dBm, matching the official document's worked example. The SDKs compute (raw - 65535) / 10 instead, which differs by 0.1 dBm. The SDKs treat values outside a 20 dBm span as invalid, and so does this library
 - ANT: 1-byte antenna index, 0-based
-- Phase and frequency: the 2025 Java SDK reads the optional blocks from the tail of the record. The full order is `PC(2) EPC TID/USER... | phase(2, big-endian) | frequency(3, big-endian, kHz) | RSSI(2) | ANT(1)`. `FF FF` reports the phase only, `FF FE` the frequency only and `FF FD` both, and the omitted block is absent. With both present the phase sits before the frequency, directly before the RSSI pair. Example record `30 00 01 .. 0C 2A 8C 0D F4 C8 FD 6F 01`, phase 0x2A8C and frequency 0x0DF4C8 kHz, which is 914.632 MHz. The SDK treats the phase as a raw 16-bit integer, so the document's degrees reading is **unverified**
+- Phase and frequency: the 2025 Java SDK reads the optional blocks from the tail of the record. The full order is `PC(2) EPC TID/USER... | phase(2, big-endian) | frequency(3, big-endian, kHz) | RSSI(2) | ANT(1)`. `FF FF` reports the phase only, `FF FE` the frequency only and `FF FD` both, and the omitted block is absent. With both present the phase sits before the frequency, directly before the RSSI pair. Example record `30 00 01 .. 0C 2A 8C 0D F4 C8 FD 6F 01`, phase 0x2A8C and frequency 0x0DF4C8 kHz, which is 914.632 MHz. The SDK treats the phase as a raw 16-bit integer. Firmware 7.40.1 confirms the document: 207 phase records spanned 0 to 359, so the unit is degrees. Live `FF FD` record `34 00 52 37 42 30 30 30 30 35 39 35 35 37 E2 80 11 70 20 00 41 FF 40 AC 0B 9F 00 51 0D 3A 54 FD B1 01`: phase 81 degrees, 866.900 MHz, -59.1 dBm, antenna 1
+- FastID: with FastID on, the PC word reads `30 00` and the 12-byte TID follows the EPC even in EPC-only mode
 
 The parser infers which optional blocks are present from the total record length, since the inventory mode is known by context.
 
@@ -574,25 +576,37 @@ The application then repeats the network block and prints `Wire break ......` wh
 - Requests framed with `C8 8C` are accepted, and the reply carries the header of the request
 - The reader enforces no heartbeat: after 60 seconds without any traffic it answers normally
 - An unplugged USB adapter surfaces on macOS as a read error, `OSError(6, 'Device not configured')`, within a second
+- 0x74 factory restore answers `01` about 0.6 seconds after the request, then the module drops every request for up to 1.5 seconds after that answer. The client waits 1.5 seconds after the answer before the next request
+- 0xA1 sub 05 work mode switches to auto and back to command over serial without trouble
+- A scan left running by a closed connection keeps streaming. The next connection receives those records, and a scan started with other reporting flags then misreads them
+
+### Tags on the antenna
+
+Second session, one antenna on port 1, region Europe, nine Gen2 tags from a Geartracking sample pack: seven Impinj Monza R6-P, TID `E2801170`, and two Alien, TID `E2803813` with a 24-byte XTID. All captures are in `captures/live-*.json`.
+
+- The frequency block reports the four ETSI channels 865.7, 866.3, 866.9 and 867.5 MHz
+- Reads of all four banks, writes, block writes, EPC writes with the CRC recomputed by the tag, the 0x6E EPC prefix filter, FastID and TagFocus behave as documented. TagFocus reports each tag once per scan
+- The Monza R6-P USER bank holds 2 words. A read past it answers `00 22 00 00`. A write to the permalocked TID answers `00 01`
+- The Alien tags answer `00 22` to RESERVED reads, so their passwords are read locked
+- Lock with the access password, verified on a Monza R6-P: lock code `00 08 02` locks USER, `02 00 80` locks the access password, `02 08 00` opens both. A locked USER bank rejects a write without the password with `00 01` and accepts it with the password. A read-locked RESERVED bank answers `00 22` without the password. A wrong password answers `00 01`
+- 0x95 block erase, 0x99 get QT, 0x9B read QT, 0x9D write QT, 0x7C, 0xA3 and 0xB0 deactivate answer a bare `00`. 0x97 answers `00 01`. No tag in the pack supports QT, so the margin read versus QT question for 0x97 stays open
+- 0x8E authenticate answers `00 01`, neither chip supports it
 
 ## Open items
 
-- 0x80 single inventory payload bytes `00 64`: first byte is likely an antenna or mode selector, 100 is likely a duration. Untested on hardware
 - The Java SDK (`SocketManageUR4`, unchanged from 2024 to 2025) sends get-version every 2000 ms when idle. During a scan it sends the bare `00` byte after 5000 ms of silence and then every 2000 ms, and a failed send drops the link. On an idle link it drops after more than 30 failed reads about 100 ms apart plus 10000 ms of silence. The 2022 jar has no scan-time heartbeat. Neither Java nor Android timing matches a single set of values
 - The Android SDK socket layer measures silence from the last inbound byte. After 5 seconds it sends the heartbeat, get-version when idle and the bare byte `00` during inventory, and repeats it about every 3 seconds while the silence lasts. It drops the link after 20 seconds of silence. Its connect timeout is 5000 ms, its read timeout 500 ms, and it sends stop inventory 100 ms after a successful connect
 - The DLL has no keepalive on TCP or serial. Its only heartbeat is the USB poll `A5 5A 00 08 EB E3 0D 0A` while no inventory runs, so the 5 and 20 second maintenance intervals do not come from the vendor DLL. The DLL's stop routine resends the stop frame every 100 ms for up to 1000 ms until the 0x8D reply arrives
 - Whether a 0x83 frame can carry more than one record. Both pure-Java SDKs parse exactly one record per frame, and the 0xE0 batch exists for the multi-record case
-- Error payload values beyond `01`, `01 00` and the documented `01` and `22` tag error flags, no SDK decodes them
+- Tag error codes other than `01` and `22`, no SDK decodes them
 - The meaning of the leading `00` in the 0x52 RF link payload
 - The 0x4A work time save flag reading, inferred from the AAR and jar disagreement. Firmware 7.40.1 rejects the save form, which supports the high nibble reading
 - The 0xE2 request tail
-- Antenna work time unit, the idle sleep time unit, and the inventory modes 3, 10, 14 and 15 from the parser constants
+- Antenna work time unit, the idle sleep time unit, and the inventory modes 3, 14 and 15 from the parser constants
 - The volume subs 11 and 12: firmware 7.40.1 never answers them, so the bare `01` versus echo question stays open for other firmware
 - The 4096 versus 2048 length window: the Java SDKs and the Android native receiver cap at 2048, the Linux and Windows native library at 4096
-- The unit of the 16-bit phase value in the phase reporting record
-- The `27 10` start inventory payload seen in a third-party client
-- Whether 0x8E and 0x9F are forwarded by the UR4 firmware, the other module-level commands are verified
-- The block permalock mask bytes on the permalock form
+- The block permalock mask bytes on the permalock form, and 0x8E on a tag that supports it. Neither chip in the test pack supports them
+- Whether 0x97 runs a QT set or a margin read, which needs an Impinj Monza 4QT tag
 - RS-485 variants, if the specific unit has one: half-duplex direction control is outside the protocol
 - The meaning of the voltage value `A9 EC` and of the `01 02 02` tail of the 0x67 fast inventory reply
 

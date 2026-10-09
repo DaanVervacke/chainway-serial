@@ -56,14 +56,16 @@ asyncio.run(main())
 
 The wire protocol is reverse engineered from the vendor Android, Java and Windows SDKs, cross-checked against the vendor's official protocol document and the native libraries. Every command the sources assign to the UR4 is implemented, including the module-level subset and the native library catalog, with two gaps: opcode 0x30, which carries two conflicting meanings in the sources, and the 0xF0 imager settings with undocumented payloads. Opcode 0x97 also has two meanings. The library sends it as the Monza QT set from the native library, while the 2025 Java SDK uses it for a margin read.
 
-Verified on a UR4 over RS-232 at 115200, mainboard firmware 7.0.9, UHF module firmware 7.40.1, hardware 2.2.0, without antenna or tags:
+Verified on a UR4 over RS-232 at 115200, mainboard firmware 7.0.9, UHF module firmware 7.40.1, hardware 2.2.0, with one antenna and Impinj Monza R6-P and Alien tags:
 
 - Status, RF and configuration reads, and write round trips for power, region, RF link, FastID, TagFocus, inventory mode, Gen2 parameters, trigger timing and the internal baud rate
 - Which settings survive a power cycle, per save flag
 - Continuous inventory start, stop and command rejection while a scan runs, framing resync after garbage bytes, dead-link detection and reconnect, software reset and factory reset
-- The split between the STM32 mainboard and the UHF module, and which command families belong to other Chainway hardware: battery, barcode, LED, collected tag storage and volume get no useful answer on the UR4
+- Tag sightings with TID, USER, phase in degrees and channel frequency, single inventory, EPC filters, FastID and TagFocus
+- Reads and writes of all four banks, block write, access passwords and lock and unlock
+- The split between the STM32 mainboard and the UHF module, and which command families belong to other Chainway hardware: battery, barcode, LED, collected tag storage, tag sensors, deactivate and volume get no useful answer on the UR4
 
-Not verified yet: the TCP transport, tag reads and every tag operation, which need an antenna and tags. The `hardware/` test suite runs these checks against a real reader with `CHAINWAY_URL=/dev/ttyUSB0 uv run pytest hardware`. `uv run python -m scripts.probe_chainway /dev/ttyUSB0` runs every read command and a three second inventory and stores the answers as JSON, with rejected commands recorded as errors. Without a URL it lists the readers it discovers on the network. The complete byte level reference, with every decoded payload layout, the live findings and the open items, lives in [docs/protocol.md](docs/protocol.md). Mainboard firmware dumps of the test unit live in [firmware/UR4](firmware/UR4).
+Not verified yet: the TCP transport, kill, and the commands the test tags do not support: authenticate, block permalock and the Monza QT family. The `hardware/` test suite runs these checks against a real reader with `CHAINWAY_URL=/dev/ttyUSB0 uv run pytest hardware`. `uv run python -m scripts.probe_chainway /dev/ttyUSB0` runs every read command and a three second inventory and stores the answers as JSON, with rejected commands recorded as errors. Without a URL it lists the readers it discovers on the network. The complete byte level reference, with every decoded payload layout, the live findings and the open items, lives in [docs/protocol.md](docs/protocol.md). Mainboard firmware dumps of the test unit live in [firmware/UR4](firmware/UR4).
 
 `set_uart_baudrate` only accepts 115200 and 460800. The module also accepts a code for 57600 that the mainboard cannot follow, which cuts the module off from the host until the code is reset over the mainboard debug port.
 
