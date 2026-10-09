@@ -1,0 +1,134 @@
+{
+  "get_version": {
+    "major": 7,
+    "minor": 40,
+    "patch": 1
+  },
+  "get_stm32_version": {
+    "major": 7,
+    "minor": 0,
+    "patch": 9
+  },
+  "get_hardware_version": {
+    "major": 2,
+    "minor": 2,
+    "patch": 0
+  },
+  "get_device_id": "34002c00",
+  "get_uart_baudrate": "BAUD_115200",
+  "get_temperature": 26.0,
+  "get_antenna_connection_state": {
+    "connected": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ],
+    "raw": "0000"
+  },
+  "verify_voltage": -22036,
+  "get_temperature_protect": "error: ChainwayResponseError: temperature protect payload must start with 0x01 and carry at least 2 bytes, got b'\\x00'",
+  "get_rf_power": [
+    {
+      "antenna": 1,
+      "read_power_dbm": 30.0,
+      "write_power_dbm": 30.0
+    },
+    {
+      "antenna": 2,
+      "read_power_dbm": 30.0,
+      "write_power_dbm": 30.0
+    },
+    {
+      "antenna": 3,
+      "read_power_dbm": 30.0,
+      "write_power_dbm": 30.0
+    },
+    {
+      "antenna": 4,
+      "read_power_dbm": 30.0,
+      "write_power_dbm": 30.0
+    }
+  ],
+  "get_region": "EUROPE",
+  "get_fixed_frequency": [],
+  "get_return_loss": [
+    {
+      "port": 1,
+      "loss_db": 1
+    },
+    {
+      "port": 2,
+      "loss_db": 0
+    },
+    {
+      "port": 3,
+      "loss_db": 0
+    },
+    {
+      "port": 4,
+      "loss_db": 0
+    }
+  ],
+  "get_gen2_parameters": {
+    "target": 0,
+    "action": 0,
+    "truncate": false,
+    "dynamic_q": true,
+    "start_q": 6,
+    "min_q": 0,
+    "max_q": 15,
+    "divider_ratio": 0,
+    "coding": 0,
+    "tr_ext": false,
+    "sel": 0,
+    "session": 0,
+    "gen2_target": false,
+    "link_frequency": 0
+  },
+  "get_rf_link": "PR_ASK_MILLER_4_320_KHZ",
+  "get_fast_id": false,
+  "get_tag_focus": false,
+  "get_inventory_mode": {
+    "mode": "EPC",
+    "user_address": 0,
+    "user_length": 0
+  },
+  "get_antenna_mask": 1,
+  "get_work_mode": "COMMAND",
+  "get_buzzer": true,
+  "get_gpi": {
+    "input_1": false,
+    "input_2": false
+  },
+  "get_trigger_config": {
+    "input": "INPUT_1",
+    "work_time_ms": 1000,
+    "min_interval_ms": 1000,
+    "output": "LINK"
+  },
+  "get_reader_address": {
+    "ip": "192.168.99.202",
+    "port": 8888,
+    "subnet_mask": "255.255.255.0",
+    "gateway": "192.168.99.1"
+  },
+  "get_destination_address": {
+    "ip": "192.168.99.65",
+    "port": 9999,
+    "subnet_mask": null,
+    "gateway": null
+  }
+}
