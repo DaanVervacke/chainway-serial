@@ -7,6 +7,16 @@ Client
 .. autoclass:: chainway_serial.client.ChainwayClient
    :members:
 
+.. py:data:: chainway_serial.TagCallback
+
+   The ``on_tag`` callback type. It takes a :class:`chainway_serial.Tag`
+   and may be a plain function or a coroutine function.
+
+.. py:data:: chainway_serial.ConnectionLostCallback
+
+   The ``on_connection_lost`` callback type. It takes the exception that
+   ended the link and may be a plain function or a coroutine function.
+
 Discovery
 ---------
 
