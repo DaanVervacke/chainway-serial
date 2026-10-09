@@ -14,7 +14,7 @@ uv run python -m scripts.check
 ```text
 ruff format --check .
 ruff check .
-mypy src tests scripts
+mypy src tests scripts hardware
 coverage run -m pytest
 coverage report
 uv build
@@ -22,6 +22,10 @@ uv audit
 ```
 
 Coverage measures branches in `src/` and requires `fail_under = 98`. `uv audit` needs network access.
+
+## Live hardware tests
+
+`hardware/` holds a pytest suite against a real reader, outside the default `testpaths` so the gate never touches hardware. Run it with `CHAINWAY_URL=/dev/tty.PL2303G-USBtoUART110 uv run pytest hardware`. Without the variable every test skips. The suite changes reader settings and ends with a factory restore, so a full run leaves the unit at factory defaults.
 
 ## Adding a command
 
