@@ -17,8 +17,8 @@ from chainway_serial import (
     ChainwayClient,
     ChainwayConnectionError,
     ChainwayInventoryActiveError,
-    ChainwayResponseError,
     ChainwayTimeoutError,
+    ChainwayUnsupportedCommandError,
     FirmwareVersion,
     InventoryMode,
     ProtocolType,
@@ -90,12 +90,16 @@ async def test_antenna_work_time_accepts_only_the_volatile_form(
 ) -> None:
     original = await client.get_antenna_work_time(1)
     other = 100 if original != 100 else 200
-    with pytest.raises(ChainwayResponseError):
-        await client.set_antenna_work_time(1, other, save=True)
-    assert await client.get_antenna_work_time(1) == original
-    await client.set_antenna_work_time(1, other, save=False)
-    assert await client.get_antenna_work_time(1) == other
-    await client.set_antenna_work_time(1, original, save=False)
+    try:
+        with pytest.raises(ChainwayUnsupportedCommandError):
+            await client.set_antenna_work_time(1, other, save=True)
+        assert await client.get_antenna_work_time(1) == original
+        await client.set_antenna_work_time(1, other, save=False)
+        assert await client.get_antenna_work_time(1) == other
+    finally:
+        with suppress(ChainwayUnsupportedCommandError):
+            await client.set_antenna_work_time(1, original, save=True)
+        await client.set_antenna_work_time(1, original, save=False)
     assert await client.get_antenna_work_time(1) == original
 
 
@@ -142,7 +146,7 @@ async def test_inventory_mode_roundtrip(client: ChainwayClient) -> None:
 
 async def test_protocol_type_read_only(client: ChainwayClient) -> None:
     assert await client.get_protocol_type() is ProtocolType.ISO_18000_6C
-    with pytest.raises(ChainwayResponseError):
+    with pytest.raises(ChainwayUnsupportedCommandError):
         await client.set_protocol_type(ProtocolType.GB_T_29768)
 
 
@@ -159,9 +163,11 @@ async def test_trigger_config_roundtrip(client: ChainwayClient) -> None:
     variant = TriggerConfig(
         original.input, original.work_time_ms + 1000, original.min_interval_ms, original.output
     )
-    await client.set_trigger_config(variant)
-    assert await client.get_trigger_config() == variant
-    await client.set_trigger_config(original)
+    try:
+        await client.set_trigger_config(variant)
+        assert await client.get_trigger_config() == variant
+    finally:
+        await client.set_trigger_config(original)
     assert await client.get_trigger_config() == original
 
 
@@ -183,10 +189,23 @@ async def test_unsupported_commands_raise(client: ChainwayClient) -> None:
         await client.get_dual_single_mode()
     with pytest.raises(ChainwayTimeoutError):
         await client.set_volume(5)
-    with pytest.raises(ChainwayResponseError):
+    with pytest.raises(ChainwayUnsupportedCommandError):
         await client.set_dwell_time(1000, 3)
-    with pytest.raises(ChainwayResponseError):
+    with pytest.raises(ChainwayUnsupportedCommandError):
         await client.scan_barcode()
+
+
+async def test_unsupported_reads_raise(client: ChainwayClient) -> None:
+    with pytest.raises(ChainwayUnsupportedCommandError):
+        await client.get_temperature_protect()
+    with pytest.raises(ChainwayUnsupportedCommandError):
+        await client.get_module_work_time()
+    with pytest.raises(ChainwayUnsupportedCommandError):
+        await client.get_module_parameter(param_type=0, param_id=1)
+    with pytest.raises(ChainwayUnsupportedCommandError):
+        await client.get_reader_idle_sleep_time()
+    with pytest.raises(ChainwayUnsupportedCommandError):
+        await client.get_battery_level()
 
 
 async def test_inventory_rejects_commands_while_a_scan_runs(
