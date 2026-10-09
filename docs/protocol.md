@@ -498,7 +498,7 @@ From the vendor manual: the start and stop conditions in trigger mode must be op
 
 ## Live verification, UR4 firmware 7.40.1
 
-Observed on one UR4 over RS-232 at 115200 in October 2026, mainboard firmware 7.0.9, UHF module firmware 7.40.1, hardware 2.2.0, no antenna and no tags. Raw frames live in `captures/`.
+Observed on one UR4 over RS-232 at 115200 in October 2026, mainboard firmware 7.0.9, UHF module firmware 7.40.1, hardware 2.2.0, no antenna and no tags.
 
 ### Architecture
 
@@ -520,7 +520,7 @@ Read over SWD from the mainboard, an STM32F2 (device ID 0x411, 512 KiB flash, re
 
 ### Recovery from internal baud code 0x01
 
-Done once on the development unit in October 2026, see `captures/swd/` for the frames and scripts.
+Done once on the development unit in October 2026.
 
 1. Connect an SWD probe to the mainboard header and halt the core. Set DBGMCU_APB1_FZ (0xE0042008) to 0x1800 so the watchdogs stop while halted. A halted core keeps the firmware from rewriting USART1.
 2. Set USART1 BRR (0x40011008) to 0x412 for 57600 at 60 MHz. Send bytes by writing USART1 DR (0x40011004) after TXE. Capture the replies with DMA2 stream 2 channel 4 from USART1 DR into RAM, because polling RXNE over SWD is too slow.
@@ -564,7 +564,13 @@ The application then repeats the network block and prints `Wire break ......` wh
 - 0x4A antenna work time with the save bit set is rejected with `00`, the volatile form works
 - 0x06 set protocol type is rejected with `00`, 0xB2 dwell time is rejected with `00`
 - Without an antenna, 0x80 single inventory and 0x82 start inventory are silent, no error frame. 0x24 carrier wave is acknowledged and transmits into the open port
-- The fixed frequency table clears at a power cycle
+- Persistence across a power cycle, measured by writing 13 settings, power cycling and reading back:
+  - Module commands with the save flag set keep their value: 0x28 antenna mask, 0x64 fast inventory mode and 0x10 power
+  - Module commands with the save flag clear revert to the stored value: 0x52 RF link, 0x2C region, 0x70 inventory mode, 0x4A antenna work time and 0x10 power
+  - Module commands without a save flag are volatile: 0x14 fixed frequency, 0x5C FastID, 0x60 TagFocus and 0x20 Gen2 parameters
+  - The mainboard keeps 0xA1 sub 07 buzzer and sub 0B trigger parameters, which carry no save flag
+  - 0x10 power falls back per antenna to the last saved value. Antenna 2 written with save set to 20 dBm also stored 20 on antennas 3 and 4. Antenna 3 then set to 21 dBm without save read 20 again after the power cycle
+- With the module connected and working, every read in the command map answers, except 0x6C dual single mode and 0xA1 sub 12 volume. The `00` answers of the 0xE4, 0xE9 and 0xF0 families come from the module: they disappear when the module is cut off
 - Requests framed with `C8 8C` are accepted, and the reply carries the header of the request
 - The reader enforces no heartbeat: after 60 seconds without any traffic it answers normally
 - An unplugged USB adapter surfaces on macOS as a read error, `OSError(6, 'Device not configured')`, within a second
@@ -588,12 +594,11 @@ The application then repeats the network block and prints `Wire break ......` wh
 - Whether 0x8E and 0x9F are forwarded by the UR4 firmware, the other module-level commands are verified
 - The block permalock mask bytes on the permalock form
 - RS-485 variants, if the specific unit has one: half-duplex direction control is outside the protocol
-- Whether the mainboard keeps the 0xA1 buzzer and trigger settings across a power cycle. They read back as defaults after one, but the module was unreachable at the time
 - The meaning of the voltage value `A9 EC` and of the `01 02 02` tail of the 0x67 fast inventory reply
 
 ## Decompiled source locations
 
-The decompiled trees live in a temporary workspace:
+Where the logic sits in the decompiled vendor sources:
 
 - Android AAR: obfuscated class names, `Q.java` and `T.java` hold the command builders, `com/rscja/deviceapi/b.java` the tag record, batch and lock code logic
 - Java jar: readable names, `i.java` and `j.java` hold the frame and command logic, `h.java` and `d.java` the record and hardcoded frames

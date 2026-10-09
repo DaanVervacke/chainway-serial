@@ -4,7 +4,7 @@ Dumped on October 9, 2026 from the development unit, after a 0x74 factory reset 
 
 ## mainboard-stm32f2
 
-STM32F2, device ID 0x411, 512 KiB flash, 128 KiB SRAM, read protection level 0. Read over SWD with a Tigard on the mainboard header `3V3 DIO CLK RST GND`, OpenOCD config `captures/tigard-swd.cfg`. The core was halted during the reads and resumed afterwards. Nothing was written.
+STM32F2, device ID 0x411, 512 KiB flash, 128 KiB SRAM, read protection level 0. Read over SWD with a Tigard on the mainboard header `3V3 DIO CLK RST GND`, OpenOCD with the `ftdi` driver in SWD mode. The core was halted during the reads and resumed afterwards. Nothing was written.
 
 | File | Address | Size | Content |
 |---|---|---|---|

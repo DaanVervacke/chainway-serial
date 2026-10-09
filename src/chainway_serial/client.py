@@ -558,6 +558,8 @@ class ChainwayClient:
     async def set_fixed_frequency(self, frequency_khz: int) -> None:
         """Pin the reader to one frequency.
 
+        The setting lasts until power off.
+
         Raises:
             ValueError: The frequency does not fit the 3-byte field.
         """
@@ -608,7 +610,10 @@ class ChainwayClient:
         return parse_return_loss(payload)
 
     async def set_gen2_parameters(self, parameters: Gen2Parameters) -> None:
-        """Set the Gen2 inventory parameters."""
+        """Set the Gen2 inventory parameters.
+
+        The setting lasts until power off.
+        """
         response = await self._request(
             Command.SET_GEN2_PARAMETERS, pack_gen2_parameters(parameters)
         )
@@ -669,7 +674,10 @@ class ChainwayClient:
         return RfLink(payload[2])
 
     async def set_fast_id(self, *, enabled: bool) -> None:
-        """Turn FastID on or off."""
+        """Turn FastID on or off.
+
+        The setting lasts until power off.
+        """
         response = await self._request(Command.SET_FAST_ID, bytes((int(enabled), 0x00)))
         _require_ack(response, Command.SET_FAST_ID)
 
@@ -680,7 +688,10 @@ class ChainwayClient:
         return payload[1] == 0x01
 
     async def set_tag_focus(self, *, enabled: bool) -> None:
-        """Turn TagFocus on or off."""
+        """Turn TagFocus on or off.
+
+        The setting lasts until power off.
+        """
         response = await self._request(Command.SET_TAG_FOCUS, bytes((int(enabled), 0x00)))
         _require_ack(response, Command.SET_TAG_FOCUS)
 
@@ -1714,7 +1725,10 @@ class ChainwayClient:
         return WorkMode(payload[1])
 
     async def set_buzzer(self, *, enabled: bool) -> None:
-        """Turn the buzzer on or off."""
+        """Turn the buzzer on or off.
+
+        The mainboard keeps the setting across a power cycle.
+        """
         response = await self._request(
             Command.CONFIG, bytes((ConfigSubcommand.SET_BUZZER, int(enabled)))
         )
@@ -1745,7 +1759,10 @@ class ChainwayClient:
         return GpiState(input_1=payload[1] == 0x01, input_2=payload[2] == 0x01)
 
     async def set_trigger_config(self, config: TriggerConfig) -> None:
-        """Set the trigger work mode timing."""
+        """Set the trigger work mode timing.
+
+        The mainboard keeps the setting across a power cycle.
+        """
         work_units = config.work_time_ms // 10
         interval_units = config.min_interval_ms // 10
         payload = bytes(
