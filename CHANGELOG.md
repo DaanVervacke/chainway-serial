@@ -32,6 +32,7 @@ Before 1.0, breaking changes ship as minor bumps.
 - Replace stale unverified notes with live findings
 - Record the live tag session findings
 - Record that a closed link leaves the scan running
+- Record that a factory restore also resets the mainboard settings
 
 ### Features
 
@@ -47,6 +48,7 @@ Before 1.0, breaking changes ship as minor bumps.
 - Update the changelog
 - Update the changelog
 - Add UR4 mainboard firmware dumps
+- Update the changelog
 - Update the changelog
 - Update the changelog
 
