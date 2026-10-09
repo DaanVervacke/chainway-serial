@@ -19,6 +19,7 @@ DEFAULT_KEEPALIVE_INTERVAL = 5.0
 DEFAULT_DEAD_LINK_TIMEOUT = 20.0
 MAINTENANCE_TICK = 0.5
 INVENTORY_START_DELAY = 0.5
+CONFIG_COMMIT_DELAY = 0.7
 
 SINGLE_INVENTORY_PAYLOAD = b"\x00\x64"
 START_INVENTORY_PAYLOAD = b"\x00\x00"
@@ -180,6 +181,17 @@ class ConfigSubcommand(IntEnum):
     GET_TRIGGER_CONFIG = 0x0C
     SET_VOLUME = 0x11
     GET_VOLUME = 0x12
+
+
+CONFIG_COMMITTING_SUBCOMMANDS = frozenset(
+    {
+        ConfigSubcommand.SET_READER_ADDRESS,
+        ConfigSubcommand.SET_DESTINATION_ADDRESS,
+        ConfigSubcommand.SET_WORK_MODE,
+        ConfigSubcommand.SET_BUZZER,
+        ConfigSubcommand.SET_TRIGGER_CONFIG,
+    }
+)
 
 
 class PeripheralSubcommand(IntEnum):

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Callable
 
 from chainway_serial.const import (
+    CONFIG_COMMITTING_SUBCOMMANDS,
     FRAME_HEADERS,
     MAX_FRAME_LENGTH,
     MIN_FRAME_LENGTH,
@@ -34,6 +36,9 @@ class FakeReaderLogic:
         self.bad_checksum_commands: set[int] = set()
         self.failing_tag_commands: set[int] = set()
         self.junk_on_connect = b""
+        self.commit_mute = 0.0
+        self.dropped: list[tuple[int, bytes]] = []
+        self._muted_until = 0.0
         self.push: Callable[[bytes], None] | None = None
         self.close_transport: Callable[[], None] | None = None
         self._buffer = bytearray()
@@ -207,6 +212,16 @@ class FakeReaderLogic:
                 break
             if command in self.silent_commands:
                 continue
+            now = time.monotonic()
+            if now < self._muted_until:
+                self.dropped.append((command, payload))
+                continue
+            if (
+                command == Command.CONFIG
+                and payload[:1]
+                and payload[0] in CONFIG_COMMITTING_SUBCOMMANDS
+            ):
+                self._muted_until = now + self.commit_mute
             response = self._respond(command, payload)
             if response is None:
                 continue

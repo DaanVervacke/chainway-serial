@@ -26,6 +26,52 @@ async def _anext(stream: object) -> object:
     return await stream.__anext__()  # type: ignore[attr-defined]
 
 
+async def test_config_set_waits_out_the_commit_mute(
+    client: ChainwayClient,
+    reader_server: tuple[FakeReaderLogic, int],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    logic, _ = reader_server
+    logic.commit_mute = 0.2
+    monkeypatch.setattr("chainway_serial.client.CONFIG_COMMIT_DELAY", 0.3)
+    await client.set_buzzer(enabled=False)
+    assert await client.get_buzzer() is False
+    assert logic.dropped == []
+
+
+async def test_without_the_settle_delay_the_reader_drops_the_next_request(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    logic.commit_mute = 0.3
+    client.response_timeout = 0.1
+    await client.set_buzzer(enabled=False)
+    with pytest.raises(ChainwayTimeoutError):
+        await client.get_version()
+    assert logic.dropped == [(Command.GET_VERSION, b"")]
+
+
+async def test_rejected_config_set_does_not_start_a_settle_window(
+    client: ChainwayClient,
+    reader_server: tuple[FakeReaderLogic, int],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    logic, _ = reader_server
+    monkeypatch.setattr("chainway_serial.client.CONFIG_COMMIT_DELAY", 5.0)
+    logic._config_responders[0x07] = lambda _payload: b"\x00"
+    with pytest.raises(ChainwayResponseError):
+        await client.set_buzzer(enabled=False)
+    assert client._quiet_until == 0.0
+
+
+async def test_gpo_set_does_not_start_a_settle_window(
+    client: ChainwayClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("chainway_serial.client.CONFIG_COMMIT_DELAY", 5.0)
+    await client.set_gpo(output_0=True, output_1=False, relay_closed=False)
+    assert client._quiet_until == 0.0
+
+
 async def test_dead_link_fires_the_callback_exactly_once(
     make_client: Callable[..., ChainwayClient],
 ) -> None:

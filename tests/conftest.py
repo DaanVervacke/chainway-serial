@@ -46,6 +46,7 @@ class FakeReaderServerProtocol(asyncio.Protocol):
 def fast_client_timings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("chainway_serial.client.INVENTORY_START_DELAY", 0.0)
     monkeypatch.setattr("chainway_serial.client.MAINTENANCE_TICK", 0.05)
+    monkeypatch.setattr("chainway_serial.client.CONFIG_COMMIT_DELAY", 0.0)
 
 
 @pytest.fixture

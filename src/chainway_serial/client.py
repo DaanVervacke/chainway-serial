@@ -19,6 +19,8 @@ from .const import (
     BARCODE_NO_READ_PAYLOAD,
     BYTE_MAX,
     COLLECTED_TAGS_FULL_PAYLOAD,
+    CONFIG_COMMIT_DELAY,
+    CONFIG_COMMITTING_SUBCOMMANDS,
     DEFAULT_BAUDRATE,
     DEFAULT_DEAD_LINK_TIMEOUT,
     DEFAULT_KEEPALIVE_INTERVAL,
@@ -232,6 +234,7 @@ class ChainwayClient:
         self._last_keepalive = 0.0
         self._link_reported = False
         self._link_lost_error: Exception | None = None
+        self._quiet_until = 0.0
 
     @property
     def connected(self) -> bool:
@@ -813,6 +816,7 @@ class ChainwayClient:
         async with self._lock:
             if self._inventory_active:
                 return
+            await self._wait_for_commit()
             transport = self._transport
             if transport is None:
                 msg = "the link is closed"
@@ -1879,7 +1883,13 @@ class ChainwayClient:
         async with self._lock:
             return await self._exchange(command, payload)
 
+    async def _wait_for_commit(self) -> None:
+        delay = self._quiet_until - time.monotonic()
+        if delay > 0:
+            await asyncio.sleep(delay)
+
     async def _exchange(self, command: Command, payload: bytes) -> bytes:
+        await self._wait_for_commit()
         transport = self._transport
         if transport is None:
             msg = "the link is closed"
@@ -1890,12 +1900,20 @@ class ChainwayClient:
         transport.write(build_frame(command, payload))
         try:
             async with asyncio.timeout(self.response_timeout):
-                return await future
+                response = await future
         except TimeoutError as err:
             msg = f"no response for command {command:#04x} within {self.response_timeout} seconds"
             raise ChainwayTimeoutError(msg) from err
         finally:
             self._pending = None
+        if (
+            command == Command.CONFIG
+            and payload[:1]
+            and payload[0] in CONFIG_COMMITTING_SUBCOMMANDS
+            and response[:1] == bytes((STATUS_OK,))
+        ):
+            self._quiet_until = time.monotonic() + CONFIG_COMMIT_DELAY
+        return response
 
     def _handle_frame(self, command: int, payload: bytes) -> None:
         pending = self._pending
