@@ -85,6 +85,20 @@ async def test_rf_power_write_leaves_lower_antennas_alone(
     assert (await client.get_rf_power())[1].write_power_dbm == original
 
 
+async def test_antenna_work_time_accepts_only_the_volatile_form(
+    client: ChainwayClient,
+) -> None:
+    original = await client.get_antenna_work_time(1)
+    other = 100 if original != 100 else 200
+    with pytest.raises(ChainwayResponseError):
+        await client.set_antenna_work_time(1, other, save=True)
+    assert await client.get_antenna_work_time(1) == original
+    await client.set_antenna_work_time(1, other, save=False)
+    assert await client.get_antenna_work_time(1) == other
+    await client.set_antenna_work_time(1, original, save=False)
+    assert await client.get_antenna_work_time(1) == original
+
+
 async def test_region_roundtrip(client: ChainwayClient) -> None:
     original = await client.get_region()
     other = Region.CHINA_1 if original is not Region.CHINA_1 else Region.USA
