@@ -48,7 +48,9 @@ async def discover_readers(
     Args:
         listen_seconds: Seconds to listen before returning. The
             default of 12 seconds covers one full broadcast interval.
-            A window shorter than 10 seconds can miss a reader.
+            A window shorter than 10 seconds can miss a reader. Wi-Fi
+            drops some broadcasts, so on a wireless host 25 to 35
+            seconds finds a reader more reliably.
         port: UDP port to listen on.
 
     Returns:

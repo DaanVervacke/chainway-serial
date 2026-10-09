@@ -1801,7 +1801,14 @@ class ChainwayClient:
         return parse_reader_address(payload, ConfigSubcommand.GET_DESTINATION_ADDRESS)
 
     async def set_work_mode(self, mode: WorkMode) -> None:
-        """Set who drives the inventory."""
+        """Set who drives the inventory.
+
+        In auto mode the UR4 starts scanning when it boots and pushes
+        the tag frames to the destination address over UDP when the
+        trigger output route is UDP. Call :meth:`software_reset` and
+        :meth:`disconnect` afterwards. Connecting a client sends stop
+        inventory, which ends the auto scan until the next boot.
+        """
         response = await self._request(
             Command.CONFIG, bytes((ConfigSubcommand.SET_WORK_MODE, mode))
         )
