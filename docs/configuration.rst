@@ -145,21 +145,6 @@ Peripherals
 power cycle. The battery, barcode, beep, volume and LED commands
 belong to other Chainway readers. A UR4 does not support them.
 
-Module settings
----------------
-
-Most of these take raw integers with undocumented units:
-
-.. code-block:: python
-
-   print(await client.verify_voltage())
-   await client.set_temperature_protect(1)
-   await client.set_module_work_time(100)
-   await client.set_dual_single_mode(0)
-   await client.set_reader_idle_sleep_time(10)
-   await client.set_dwell_time(1000, 3)
-   data = await client.get_module_parameter(param_type=0, param_id=1)
-
 Firmware update
 ---------------
 
