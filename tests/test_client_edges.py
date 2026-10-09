@@ -149,6 +149,26 @@ async def test_a_link_that_never_answered_is_reopened_once(
     assert isinstance(lost[0], ChainwayConnectionError)
 
 
+async def test_a_keepalive_on_a_link_that_never_answered_does_not_reconnect(
+    make_client: Callable[..., ChainwayClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = make_client(keepalive_interval=0.05, dead_link_timeout=60.0)
+    await client.connect()
+    try:
+        client._link_answered = False
+        assert client._transport is not None
+        monkeypatch.setattr(client._transport, "write", _reset_on_write)
+        for _ in range(100):
+            await asyncio.sleep(0.01)
+            if not client.connected:
+                break
+        await asyncio.sleep(0.2)
+        assert not client.connected
+        assert client._maintenance_task is None
+    finally:
+        await client.disconnect()
+
+
 async def test_the_reopen_is_tried_only_once(
     client: ChainwayClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

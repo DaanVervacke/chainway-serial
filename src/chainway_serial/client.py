@@ -2237,4 +2237,6 @@ class ChainwayClient:
                             self._write(transport, INVENTORY_KEEPALIVE_BYTE)
                 else:
                     with suppress(ChainwayError):
-                        await self._request(Command.GET_VERSION)
+                        await self._request_once(
+                            Command.GET_VERSION, b"", allow_during_inventory=False
+                        )
