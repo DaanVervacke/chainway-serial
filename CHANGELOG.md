@@ -23,6 +23,8 @@ Before 1.0, breaking changes ship as minor bumps.
 - Validate the subnet mask and gateway of a reader address
 - Sort discovered readers by numeric address and wrap port errors
 - Keep the keepalive from reopening a link
+- Raise the unsupported command error for every bare 00 reply
+- Refuse antenna 16 for the antenna work time
 
 ### Documentation
 
@@ -51,6 +53,8 @@ Before 1.0, breaking changes ship as minor bumps.
 - Document the tag and connection lost callback types
 - Narrow the secrets rule to passwords and live deployment data
 - Ban every code comment in the contributing rules
+- Group the unsupported commands by how they fail
+- Put the env file note next to the redaction rule
 
 ### Features
 
@@ -74,6 +78,7 @@ Before 1.0, breaking changes ship as minor bumps.
 - Update the changelog
 - Update the changelog
 - Bump release-drafter to 7.9.0
+- Update the changelog
 
 ## [0.2.0] - 2026-10-04
 
