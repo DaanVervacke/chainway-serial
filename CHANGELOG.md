@@ -14,6 +14,8 @@ Before 1.0, breaking changes ship as minor bumps.
 - Wait out the reader's mute window after a configuration write
 - Report OS-level link failures as ChainwayConnectionError
 - Refuse internal baud codes outside UartBaudRate
+- Raise a response error for an unsupported pending baud code
+- Keep the probe script running when a read fails
 
 ### Documentation
 
@@ -22,6 +24,10 @@ Before 1.0, breaking changes ship as minor bumps.
 - Record firmware 7.40.1 live verification in the protocol trail
 - Correct the device ID, reset and GPI docstrings from live findings
 - Map the UR4 mainboard and module split and the boot console
+- Document internal baud code 0x01 as 57600 and the SWD recovery
+- Record setting persistence and drop local file references
+- Update the readme with the live verification status
+- Replace stale unverified notes with live findings
 
 ### Features
 
@@ -33,6 +39,8 @@ Before 1.0, breaking changes ship as minor bumps.
 
 - Update the changelog
 - Update the changelog
+- Update the changelog
+- Add UR4 mainboard firmware dumps
 
 ## [0.2.0] - 2026-10-04
 
