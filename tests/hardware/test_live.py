@@ -2,7 +2,9 @@
 
 The tests run in file order and finish with a factory restore, so a
 full run leaves the reader in its baseline state. The buzzer setting
-from before the run is written back after the restore. Expected wire
+and the reader address from before the run are written back after the
+restore. On a TCP link the restore is skipped, because it moves the
+reader to its factory address. Expected wire
 behavior is documented in docs/protocol.md under live verification.
 """
 
@@ -13,9 +15,11 @@ import pytest
 
 from chainway_serial import (
     ChainwayClient,
+    ChainwayConnectionError,
     ChainwayInventoryActiveError,
     ChainwayResponseError,
     ChainwayTimeoutError,
+    FirmwareVersion,
     InventoryMode,
     ProtocolType,
     Region,
@@ -26,7 +30,21 @@ from chainway_serial import (
 )
 from chainway_serial.models import OutputRoute, TriggerInput
 
+from .conftest import TCP
+
 PARTIAL_FRAME = b"\xa5\x5a\x00\xff\x02\xff\x0d\x0a"
+FACTORY_READER_IP = "192.168.99.202"
+
+
+async def _version_within(
+    client: ChainwayClient, *, attempts: int, pause: float = 0.5
+) -> FirmwareVersion | None:
+    for _ in range(attempts):
+        try:
+            return await client.get_version()
+        except ChainwayTimeoutError, ChainwayConnectionError:
+            await asyncio.sleep(pause)
+    return None
 
 
 async def test_identity_reads(client: ChainwayClient) -> None:
@@ -198,7 +216,7 @@ async def test_garbage_bytes_resync_the_framing(client: ChainwayClient) -> None:
         PARTIAL_FRAME,
     ):
         transport.write(chunk)
-    assert await client.get_version() is not None
+    assert await _version_within(client, attempts=3) is not None
 
 
 async def test_dead_link_drop_and_reconnect(url: str) -> None:
@@ -220,19 +238,25 @@ async def test_dead_link_drop_and_reconnect(url: str) -> None:
         assert live.connected
 
 
-async def test_software_reset_then_factory_restore(client: ChainwayClient) -> None:
+async def _reboot(client: ChainwayClient) -> None:
     await client.software_reset()
-    for _ in range(20):
+    deadline = asyncio.get_running_loop().time() + 45.0
+    while asyncio.get_running_loop().time() < deadline:
+        if await _version_within(client, attempts=1) is not None:
+            return
         await asyncio.sleep(0.5)
-        try:
-            if await client.get_version() is not None:
-                break
-        except ChainwayTimeoutError:
-            continue
 
+
+async def test_software_reset_then_factory_restore(client: ChainwayClient) -> None:
+    await _reboot(client)
+    if TCP:
+        pytest.skip("0x74 moves the reader to 192.168.99.202 and drops the TCP link")
+
+    address = await client.get_reader_address()
     buzzer = await client.get_buzzer()
     await client.restore_factory_settings()
     assert await client.get_version() is not None
+    assert (await client.get_reader_address()).ip == FACTORY_READER_IP
     assert await client.get_buzzer() is True
     await client.set_buzzer(enabled=buzzer)
     assert await client.get_buzzer() is buzzer
@@ -242,3 +266,7 @@ async def test_software_reset_then_factory_restore(client: ChainwayClient) -> No
     assert await client.get_trigger_config() == TriggerConfig(
         TriggerInput.INPUT_1, 1000, 1000, OutputRoute.LINK
     )
+    if address.ip != FACTORY_READER_IP:
+        await client.set_reader_address(address)
+        await _reboot(client)
+    assert await client.get_reader_address() == address

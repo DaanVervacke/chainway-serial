@@ -6,6 +6,7 @@ import pytest
 
 from chainway_serial.const import SensorSubcommand, TagSensorSubcommand
 from chainway_serial.exceptions import ChainwayResponseError
+from chainway_serial.frames import build_frame
 from chainway_serial.models import (
     CollectedTags,
     CollectedTagsFull,
@@ -455,6 +456,16 @@ def test_build_reader_address_payload_with_mask_and_gateway() -> None:
     address = ReaderAddress(ip="10.0.0.7", port=5010, subnet_mask="255.255.0.0", gateway="10.0.0.1")
     payload = build_reader_address_payload(0x01, address)
     assert len(payload) == 15
+
+
+def test_reader_address_set_matches_the_live_frame() -> None:
+    address = ReaderAddress(
+        ip="192.168.1.202", port=8888, subnet_mask="255.255.255.0", gateway="192.168.1.1"
+    )
+    payload = build_reader_address_payload(0x01, address)
+    assert build_frame(0xA1, payload) == bytes.fromhex(
+        "A55A0017A101C0A801CA22B8FFFFFF00C0A80101190D0A"
+    )
 
 
 def test_build_tag_operation_payload_without_filter() -> None:
