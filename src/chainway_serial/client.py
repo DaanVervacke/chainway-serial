@@ -43,9 +43,11 @@ from .const import (
     START_INVENTORY_PHASE_AND_FREQUENCY_PAYLOAD,
     START_INVENTORY_PHASE_PAYLOAD,
     STATUS_OK,
+    TAG_ERROR_MEANINGS,
     TAG_SENSOR_VOLTAGE_FACTOR,
     TAG_SUCCESS,
     TEMP_CODE_MAX,
+    UNSUPPORTED_REPLY,
     UPDATE_BLOCK_SIZE,
     VERIFY_VOLTAGE_PAYLOAD,
     WORD_MAX,
@@ -64,6 +66,7 @@ from .exceptions import (
     ChainwayInventoryActiveError,
     ChainwayResponseError,
     ChainwayTimeoutError,
+    ChainwayUnsupportedCommandError,
 )
 from .frames import build_frame
 from .models import (
@@ -167,11 +170,25 @@ def _require_ack(payload: bytes, command: Command) -> None:
         raise ChainwayResponseError(msg)
 
 
+def _reject_unsupported(payload: bytes, command: Command) -> None:
+    if payload == UNSUPPORTED_REPLY:
+        msg = f"the reader does not support command {command:#04x}, it answered a bare 00 byte"
+        raise ChainwayUnsupportedCommandError(msg)
+
+
 def _require_tag_success(payload: bytes, command: Command) -> None:
-    if payload[:2] != TAG_SUCCESS:
-        code = payload[1] if len(payload) > 1 else None
-        msg = f"command {command:#04x} failed with error code {code}"
+    if payload[:2] == TAG_SUCCESS:
+        return
+    _reject_unsupported(payload, command)
+    if len(payload) < len(TAG_SUCCESS):
+        msg = f"command {command:#04x} failed with payload {payload!r}"
         raise ChainwayResponseError(msg)
+    code = payload[1]
+    msg = f"command {command:#04x} failed with error code {code:#04x}"
+    meaning = TAG_ERROR_MEANINGS.get(code)
+    if meaning is not None:
+        msg = f"{msg}: {meaning}"
+    raise ChainwayResponseError(msg)
 
 
 class ChainwayClient:
@@ -600,11 +617,9 @@ class ChainwayClient:
         """Return the return loss of every antenna port in dB.
 
         A port reported as 0 is not enabled, or has no antenna
-        connected on a single-port module. Both Java SDKs read the
-        first payload byte of this response as a carrier wave
-        on/off state, which is the port-1 number of the return
-        loss layout, so this method follows the official protocol
-        document instead.
+        connected on a single-port module. On a UR4 the first port
+        reads 1 to 2 dB with the antenna jack open and 10 to 16 dB
+        with an antenna attached, and ports 2 to 4 read 0.
         """
         payload = await self._request(Command.GET_RETURN_LOSS)
         return parse_return_loss(payload)
@@ -855,10 +870,9 @@ class ChainwayClient:
         both.
 
         Args:
-            phase: Report the tag phase in every sighting. The unit
-                is unverified, the official protocol document reads
-                degrees and the 2025 Java SDK reads a raw 16-bit
-                integer.
+            phase: Report the tag phase in degrees, 0 to 359, in every
+                sighting. With phase reporting alone the reader leaves
+                the TID and USER blocks out of the sightings.
             frequency: Report the channel frequency in kHz in every
                 sighting.
         """
@@ -923,7 +937,7 @@ class ChainwayClient:
         is collected.
 
         Args:
-            phase: Report the tag phase in every sighting.
+            phase: Report the tag phase in degrees in every sighting.
             frequency: Report the channel frequency in kHz in every
                 sighting.
 
@@ -1327,10 +1341,14 @@ class ChainwayClient:
         """Return the Impinj Monza QT configuration of one tag.
 
         Raises:
+            ChainwayUnsupportedCommandError: The reader does not support
+                the command. UR4 firmware 7.40.1 answers this way for
+                tags without QT support.
             ChainwayResponseError: The response is truncated.
         """
         payload = build_tag_operation_payload(access_password, tag_filter, b"")
         response = await self._request(Command.GET_QT, payload)
+        _reject_unsupported(response, Command.GET_QT)
         require_status_header(response, 2, STATUS_OK, "QT")
         return response[1]
 
@@ -1437,15 +1455,19 @@ class ChainwayClient:
         """Send the native deactivate command to one tag.
 
         The two command bytes lead the payload and no source documents
-        their meaning. The vendor frame sends two zero bytes.
+        their meaning. The vendor frame sends two zero bytes. UR4
+        firmware 7.40.1 does not support the command.
 
         Raises:
             ValueError: The command is not two bytes.
+            ChainwayUnsupportedCommandError: The reader does not support
+                the command.
             ChainwayResponseError: The reader did not acknowledge the
                 command.
         """
         payload = build_deactivate_payload(command, access_password, tag_filter)
         response = await self._request(Command.DEACTIVATE_TAG, payload)
+        _reject_unsupported(response, Command.DEACTIVATE_TAG)
         _require_ack(response, Command.DEACTIVATE_TAG)
 
     async def set_dwell_time(self, dwell: int, count: int) -> None:
@@ -1582,11 +1604,14 @@ class ChainwayClient:
         No source documents the value.
 
         Raises:
+            ChainwayUnsupportedCommandError: The reader does not support
+                the command.
             ChainwayResponseError: The response is truncated or echoes
                 a different subcommand.
         """
         payload = build_tag_sensor_payload(TagSensorSubcommand.CHECK_OP_MODE, tag_filter, b"")
         response = await self._request(Command.TAG_SENSOR, payload)
+        _reject_unsupported(response, Command.TAG_SENSOR)
         return parse_tag_sensor_value(
             response, TagSensorSubcommand.CHECK_OP_MODE, "tag sensor mode"
         )
@@ -1597,11 +1622,14 @@ class ChainwayClient:
         The value is the raw reading times 2.5 divided by 8192.
 
         Raises:
+            ChainwayUnsupportedCommandError: The reader does not support
+                the command.
             ChainwayResponseError: The response is truncated or echoes
                 a different subcommand.
         """
         payload = build_tag_sensor_payload(TagSensorSubcommand.READ_VOLTAGE, tag_filter, b"")
         response = await self._request(Command.TAG_SENSOR, payload)
+        _reject_unsupported(response, Command.TAG_SENSOR)
         raw = parse_tag_sensor_value(
             response, TagSensorSubcommand.READ_VOLTAGE, "tag sensor voltage"
         )
@@ -1625,6 +1653,8 @@ class ChainwayClient:
 
         Raises:
             ValueError: The window is out of range.
+            ChainwayUnsupportedCommandError: The reader does not support
+                the command.
             ChainwayResponseError: The response is truncated.
         """
         if not 0 <= start <= WORD_MAX:
@@ -1636,10 +1666,15 @@ class ChainwayClient:
         extra = start.to_bytes(2) + bytes((count,))
         payload = build_tag_sensor_payload(TagSensorSubcommand.READ_MULTI_TEMP, tag_filter, extra)
         response = await self._request(Command.TAG_SENSOR, payload)
+        _reject_unsupported(response, Command.TAG_SENSOR)
         return parse_tag_temperatures(response)
 
     async def read_collected_tags(self) -> CollectedTags:
-        """Pull the tags collected in auto or trigger work mode."""
+        """Pull the tags collected in auto or trigger work mode.
+
+        UR4 firmware 7.40.1 never answers this command over serial,
+        in command and in auto work mode alike.
+        """
         payload = await self._request(Command.READ_COLLECTED_TAGS)
         return parse_collected_tags(payload)
 
@@ -1650,25 +1685,48 @@ class ChainwayClient:
         antenna byte of a live sighting. The request form is documented
         as one byte with an unverified tail, this method sends the
         single documented byte.
+
+        Raises:
+            ChainwayUnsupportedCommandError: The reader does not support
+                the command. UR4 firmware 7.40.1 answers this way.
         """
         payload = await self._request(Command.READ_COLLECTED_TAGS_FULL, COLLECTED_TAGS_FULL_PAYLOAD)
+        _reject_unsupported(payload, Command.READ_COLLECTED_TAGS_FULL)
         return parse_collected_tags_full(payload)
 
     async def get_collected_tag_count(self) -> int:
-        """Return how many collected tags the reader stores."""
+        """Return how many collected tags the reader stores.
+
+        Raises:
+            ChainwayUnsupportedCommandError: The reader does not support
+                the command. UR4 firmware 7.40.1 answers this way.
+        """
         payload = await self._request(Command.FLASH_STORAGE, bytes((FlashSubcommand.ALL_COUNT,)))
+        _reject_unsupported(payload, Command.FLASH_STORAGE)
         require_minimum_length(payload, 2, "collected count")
         return payload[0] << 8 | payload[1]
 
     async def get_new_collected_tag_count(self) -> int:
-        """Return how many collected tags arrived since the last pull."""
+        """Return how many collected tags arrived since the last pull.
+
+        Raises:
+            ChainwayUnsupportedCommandError: The reader does not support
+                the command. UR4 firmware 7.40.1 answers this way.
+        """
         payload = await self._request(Command.FLASH_STORAGE, bytes((FlashSubcommand.NEW_COUNT,)))
+        _reject_unsupported(payload, Command.FLASH_STORAGE)
         require_minimum_length(payload, 2, "collected count")
         return payload[0] << 8 | payload[1]
 
     async def delete_collected_tags(self) -> None:
-        """Delete every collected tag from the reader storage."""
+        """Delete every collected tag from the reader storage.
+
+        Raises:
+            ChainwayUnsupportedCommandError: The reader does not support
+                the command. UR4 firmware 7.40.1 answers this way.
+        """
         payload = await self._request(Command.FLASH_STORAGE, bytes((FlashSubcommand.DELETE_ALL,)))
+        _reject_unsupported(payload, Command.FLASH_STORAGE)
         require_minimum_length(payload, 2, "delete")
         if payload[0] != 0x00 or payload[1] != 0x00:
             msg = f"delete was not acknowledged, got payload {payload!r}"

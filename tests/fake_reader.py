@@ -37,6 +37,7 @@ class FakeReaderLogic:
         self.failing_tag_commands: set[int] = set()
         self.junk_on_connect = b""
         self.commit_mute = 0.0
+        self.tag_error_payload = b"\x00\x01"
         self.dropped: list[tuple[int, bytes]] = []
         self._muted_until = 0.0
         self.push: Callable[[bytes], None] | None = None
@@ -217,12 +218,7 @@ class FakeReaderLogic:
             if now < self._muted_until:
                 self.dropped.append((command, payload))
                 continue
-            if (
-                command == Command.CONFIG
-                and payload[:1]
-                and payload[0] in CONFIG_COMMITTING_SUBCOMMANDS
-            ):
-                self._muted_until = now + self.commit_mute
+            self._muted_until = now + self._mute_after(command, payload)
             response = self._respond(command, payload)
             if response is None:
                 continue
@@ -231,6 +227,15 @@ class FakeReaderLogic:
                 frame = frame[:-3] + bytes((frame[-3] ^ 0xFF,)) + frame[-2:]
             responses.append(frame)
         return responses
+
+    def _mute_after(self, command: int, payload: bytes) -> float:
+        if (
+            command == Command.CONFIG
+            and payload[:1]
+            and payload[0] in CONFIG_COMMITTING_SUBCOMMANDS
+        ):
+            return self.commit_mute
+        return 0.0
 
     def _extract_frame(self) -> tuple[int, bytes] | None:
         while True:
@@ -297,12 +302,12 @@ class FakeReaderLogic:
 
     def _respond_read_tag(self, _payload: bytes) -> bytes:
         if Command.READ_TAG in self.failing_tag_commands:
-            return b"\x01\x01"
+            return self.tag_error_payload
         return self.read_tag_payload
 
     def _respond_read_qt(self, _payload: bytes) -> bytes:
         if Command.READ_QT in self.failing_tag_commands:
-            return b"\x01\x01"
+            return self.tag_error_payload
         return self.read_qt_payload
 
     def _respond_module_parameter(self, payload: bytes) -> bytes:
@@ -314,14 +319,14 @@ class FakeReaderLogic:
 
     def _respond_sensor(self, payload: bytes) -> bytes:
         if Command.SENSOR_CALIBRATION in self.failing_tag_commands:
-            return b"\x01\x01"
+            return self.tag_error_payload
         if payload[0] == SensorSubcommand.WRITE_CALIBRATION:
             return b"\x01\x00"
         return self.sensor_payload
 
     def _respond_tag_sensor(self, payload: bytes) -> bytes:
         if Command.TAG_SENSOR in self.failing_tag_commands:
-            return b"\x01\x01"
+            return self.tag_error_payload
         if payload[0] == TagSensorSubcommand.CHECK_OP_MODE:
             return self.tag_sensor_mode_payload
         if payload[0] == TagSensorSubcommand.READ_VOLTAGE:
@@ -332,12 +337,12 @@ class FakeReaderLogic:
 
     def _respond_authenticate(self, _payload: bytes) -> bytes:
         if Command.AUTHENTICATE_TAG in self.failing_tag_commands:
-            return b"\x01\x01"
+            return self.tag_error_payload
         return self.authenticate_payload
 
     def _respond_block_permalock(self, payload: bytes) -> bytes:
         if Command.BLOCK_PERMALOCK_TAG in self.failing_tag_commands:
-            return b"\x01\x01"
+            return self.tag_error_payload
         mask_bytes = ((payload[7] << 8 | payload[8]) + 7) // 8
         offset = 9 + mask_bytes
         if payload[offset]:
@@ -347,7 +352,7 @@ class FakeReaderLogic:
 
     def _tag_result(self, command: Command) -> bytes:
         if command in self.failing_tag_commands:
-            return b"\x01\x01"
+            return self.tag_error_payload
         return b"\x01\x00"
 
     def _respond_flash(self, payload: bytes) -> bytes:

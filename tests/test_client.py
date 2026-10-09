@@ -568,7 +568,7 @@ async def test_read_qt_failure_raises(
 ) -> None:
     logic, _ = reader_server
     logic.failing_tag_commands = {Command.READ_QT}
-    with pytest.raises(ChainwayResponseError, match="error code 1"):
+    with pytest.raises(ChainwayResponseError, match="error code 0x01"):
         await client.read_qt(0x01, MemoryBank.USER, 0, 2)
 
 
@@ -668,7 +668,7 @@ async def test_tag_sensor_failure_raises(
 ) -> None:
     logic, _ = reader_server
     logic.failing_tag_commands = {Command.TAG_SENSOR}
-    with pytest.raises(ChainwayResponseError, match="error code 1"):
+    with pytest.raises(ChainwayResponseError, match="error code 0x01"):
         await client.start_tag_logging(qt_filter(), 0x50, 0x7A, 0, 0x0A)
 
 
@@ -677,7 +677,7 @@ async def test_failing_tag_operation_raises(
 ) -> None:
     logic, _ = reader_server
     logic.failing_tag_commands = {Command.WRITE_TAG}
-    with pytest.raises(ChainwayResponseError, match="error code 1"):
+    with pytest.raises(ChainwayResponseError, match="error code 0x01"):
         await client.write_tag(MemoryBank.USER, 2, b"\xe2\x80")
 
 

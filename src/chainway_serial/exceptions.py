@@ -23,5 +23,9 @@ class ChainwayResponseError(ChainwayError):
     """The reader answered with an unexpected or malformed payload."""
 
 
+class ChainwayUnsupportedCommandError(ChainwayResponseError):
+    """The reader answered with a bare 00 byte, it does not support the command."""
+
+
 class ChainwayInventoryActiveError(ChainwayError):
     """The reader only answers stop inventory while a continuous inventory runs."""

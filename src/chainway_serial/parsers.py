@@ -360,9 +360,8 @@ def parse_tag_record(
     ``with_phase`` or ``with_frequency`` the trailing block starts
     with the reported blocks in wire order, the 2-byte phase and the
     3-byte frequency in kHz, followed by the RSSI pair and the
-    optional antenna byte. The phase unit is unverified, the official
-    protocol document reads degrees and the 2025 Java SDK reads a
-    raw 16-bit integer. The RSSI pair is a 16-bit two's complement
+    optional antenna byte. The phase is in degrees, 0 to 359. The
+    RSSI pair is a 16-bit two's complement
     of dBm times ten, as the official protocol document defines it,
     and values outside the SDK validity window of 20 dBm span parse
     as None.

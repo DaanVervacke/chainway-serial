@@ -18,6 +18,7 @@ from .exceptions import (
     ChainwayProtocolError,
     ChainwayResponseError,
     ChainwayTimeoutError,
+    ChainwayUnsupportedCommandError,
 )
 from .models import (
     AntennaPower,
@@ -66,6 +67,7 @@ __all__ = [
     "ChainwayProtocolError",
     "ChainwayResponseError",
     "ChainwayTimeoutError",
+    "ChainwayUnsupportedCommandError",
     "CollectedTags",
     "CollectedTagsFull",
     "ConnectionLostCallback",

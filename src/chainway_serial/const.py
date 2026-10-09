@@ -40,6 +40,12 @@ WORD_MAX = 0xFFFF
 DWORD_MAX = 0xFFFFFFFF
 STATUS_OK = 0x01
 TAG_SUCCESS = b"\x01\x00"
+UNSUPPORTED_REPLY = b"\x00"
+TAG_ERROR_MEANINGS = {
+    0x01: "the tag rejected the operation, the memory is locked, the password is wrong,"
+    " or the chip does not support the command",
+    0x22: "no tag answered, or the word window runs past the end of the bank",
+}
 WORD_SIGN_BIT = 0x8000
 WORD_MODULUS = 0x10000
 IPV4_OCTETS = 4
