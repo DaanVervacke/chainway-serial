@@ -860,10 +860,13 @@ class ChainwayClient:
         _require_ack(response, Command.SOFTWARE_RESET)
 
     async def restore_factory_settings(self) -> None:
-        """Restore the factory settings of the UHF module.
+        """Restore the factory settings of the UHF module and the mainboard.
 
-        The reader and destination network addresses on the mainboard
-        stay as they are. The SDKs call the same opcode the soft reset.
+        On a UR4 the mainboard also resets its own settings: the buzzer
+        turns back on, the trigger parameters return to their defaults
+        and the work mode returns to command mode. The reader and
+        destination network addresses stay as they are. The SDKs call
+        the same opcode the soft reset.
         The module drops every request for about 1.5 seconds after the
         acknowledgement, so the next command waits that long.
         """

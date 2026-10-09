@@ -135,7 +135,7 @@ Power values on the wire are centi-dBm, big-endian, so 30 dBm = 0x0BB8.
 | 0x64 | `save enable 00` | 0x65, payload `01` | Set fast inventory mode. `save` 0 or 1, semantics of the mode **unverified** |
 | 0x66 | `00 00` | 0x67, payload `01 enable` | Get fast inventory mode |
 | 0x68 | empty | 0x69, payload `01` | Software reset. On the UR4 the mainboard answers it and then reboots the whole reader, bootloader banner included. A serial link through a USB adapter stays open across the reboot |
-| 0x74 | empty | 0x75, payload `01` | Restore factory settings, forwarded to the UHF module. It resets the module settings and keeps the reader and destination network addresses |
+| 0x74 | empty | 0x75, payload `01` | Restore factory settings, forwarded to the UHF module. It resets the module settings. On the UR4 the mainboard also resets its own settings: the buzzer turns back on, the trigger parameters return to their defaults and the work mode returns to command mode. The reader and destination network addresses stay as they are |
 
 Frequency regions, from the official protocol document:
 
@@ -383,7 +383,7 @@ The official protocol document V2.1.2 describes the UHF module protocol, one lay
 The deltas between the two layers:
 
 - The document's examples all use the `C8 8C` header.
-- At module level 0x68 is the software reset and 0x74 the factory reset, while the 2024 Java SDK knows only 0x74 and calls it the soft reset. The 2025 Java SDK has both, 0x68 as `uhfReset` and 0x74 renamed `factoryReset`. The Android native libraries `libDeviceAPIM.so` and `libDeviceAPIQ.so` (DeviceAPI 20250209) build 0x68 as their soft reset frame, `A5 5A 00 08 68 60 0D 0A`, and contain no 0x74 builder. The library implements both commands per the document. On the UR4, firmware 7.40.1 treats 0x74 as the factory reset of the module settings and keeps the network addresses, and the mainboard answers 0x68 by rebooting the whole reader
+- At module level 0x68 is the software reset and 0x74 the factory reset, while the 2024 Java SDK knows only 0x74 and calls it the soft reset. The 2025 Java SDK has both, 0x68 as `uhfReset` and 0x74 renamed `factoryReset`. The Android native libraries `libDeviceAPIM.so` and `libDeviceAPIQ.so` (DeviceAPI 20250209) build 0x68 as their soft reset frame, `A5 5A 00 08 68 60 0D 0A`, and contain no 0x74 builder. The library implements both commands per the document. On the UR4, firmware 7.40.1 treats 0x74 as the factory reset of the module settings and of the mainboard buzzer, trigger parameters and work mode, and keeps the network addresses, and the mainboard answers 0x68 by rebooting the whole reader
 - Tag operation error responses carry an error flag after the success flag: 0x01 means the operation failed and 0x22 means the tag could not be recognized.
 - The document defines 0x26 as get return loss. The 2024 Java SDK and the older native libraries read the first payload byte of the 0x27 response as a carrier wave on/off state, which is the port-1 number of the return loss layout. The library follows the document. The 2025 Java SDK implements the V2.1.2 meaning, return loss as `port loss` pairs, and also parses 0x4F with `payload[1]` bit 0 as ANT1 through bit 7 as ANT8 and `payload[0]` as ANT9 to ANT16. The 2024 Java SDK compared the wrong values for ANT5 to ANT16 and never decoded them.
 - Commands 0xA1 through 0xFF are reserved at module level. The reader protocol uses them: the 0xA1 configuration family, the 0xE4 peripherals and the 0xE0 collected tag pull exist only at reader level.
@@ -577,6 +577,7 @@ The application then repeats the network block and prints `Wire break ......` wh
 - The reader enforces no heartbeat: after 60 seconds without any traffic it answers normally
 - An unplugged USB adapter surfaces on macOS as a read error, `OSError(6, 'Device not configured')`, within a second
 - 0x74 factory restore answers `01` about 0.6 seconds after the request, then the module drops every request for up to 1.5 seconds after that answer. The client waits 1.5 seconds after the answer before the next request
+- 0x74 also resets the mainboard: a buzzer set off with 0xA1 sub 07 reads on again, a trigger work time of 2000 ms returns to 1000 ms and trigger work mode returns to command mode. The reader and destination network addresses are unchanged. 0x68 software reset keeps the buzzer setting. With the buzzer off, scans and single inventories are silent
 - 0xA1 sub 05 work mode switches to auto and back to command over serial without trouble
 - A scan left running by a closed connection keeps streaming. The next connection receives those records, and a scan started with other reporting flags then misreads them. Stop inventory answers `01` on an idle reader too, and a request sent right after the stop answer is served. The client sends stop inventory on every connect, like the Android SDK, and drops the tag records that arrive before the answer
 
