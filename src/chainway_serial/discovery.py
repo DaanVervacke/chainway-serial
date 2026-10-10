@@ -38,7 +38,7 @@ async def discover_readers(
     listen_seconds: float = DISCOVERY_LISTEN_SECONDS,
     port: int = UDP_DISCOVERY_PORT,
 ) -> list[DiscoveredReader]:
-    """Listen for reader discovery broadcasts and return what answered.
+    """Listen for reader discovery broadcasts and return the readers heard.
 
     The reader sends a 12-byte packet with its MAC address, IPv4
     address and TCP port to the discovery port every 10 seconds. Both

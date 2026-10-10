@@ -292,7 +292,11 @@ class TagFilter:
 
 @dataclass(frozen=True, slots=True)
 class TriggerConfig:
-    """Trigger work mode timing, set with 0xA1 sub 0B."""
+    """Trigger work mode timing, set with 0xA1 sub 0B.
+
+    The reader stores both times in 10 ms steps, so a write rounds
+    them down to a multiple of 10 ms.
+    """
 
     input: TriggerInput
     work_time_ms: int
@@ -361,7 +365,7 @@ class CollectedTagsFull:
 
 @dataclass(frozen=True, slots=True)
 class DiscoveredReader:
-    """One reader that answered the UDP discovery broadcast."""
+    """One reader heard through its UDP discovery broadcast."""
 
     mac: str
     ip: str
@@ -376,6 +380,11 @@ class Gen2Parameters:
     through S3 and SL, ``action`` 0 to 7, ``start_q``, ``min_q`` and
     ``max_q`` 0 to 15, ``coding`` 0 for FM0 and 1 to 3 for Miller 2, 4 and
     8, ``sel`` 0 to 3, and ``session`` 0 to 3 for S0 through S3.
+
+    The field defaults are not the UR4 factory values, which read back
+    as ``01 60 F0 00``. Start from
+    :meth:`ChainwayClient.get_gen2_parameters` and change single fields
+    with :func:`dataclasses.replace`.
     """
 
     target: int = 0x04

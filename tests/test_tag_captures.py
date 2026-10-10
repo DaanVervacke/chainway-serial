@@ -94,9 +94,11 @@ def test_phase_and_frequency_record() -> None:
         record, with_antenna=True, received_at=RECEIVED_AT, with_phase=True, with_frequency=True
     )
     assert tag.tid == bytes.fromhex("e2801170200041ff40ac0b9f")
+    assert tag.user_data is None
     assert tag.phase == 81
     assert tag.frequency_khz == 866900
     assert tag.rssi == -59.1
+    assert tag.antenna == 1
 
 
 def test_fast_id_record_appends_the_tid_in_epc_mode() -> None:

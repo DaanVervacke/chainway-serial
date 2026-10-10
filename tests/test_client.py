@@ -1014,6 +1014,51 @@ async def test_async_on_tag_callback_runs_as_a_task(
         await client.disconnect()
 
 
+async def test_manual_scan_sends_tags_to_the_callback(
+    reader_server: tuple[FakeReaderLogic, int],
+) -> None:
+    logic, port = reader_server
+    logic.tags_to_stream = [stream_tag_record()] * 3
+    seen: list[bytes] = []
+    client = ChainwayClient(
+        f"socket://127.0.0.1:{port}",
+        keepalive_interval=60.0,
+        dead_link_timeout=60.0,
+        on_tag=lambda tag: seen.append(tag.epc),
+    )
+    await client.connect()
+    try:
+        await client.start_inventory()
+        for _ in range(50):
+            if len(seen) == 3:
+                break
+            await asyncio.sleep(0.02)
+        assert seen == [bytes(range(1, 13))] * 3
+        assert client._tag_queue is None
+    finally:
+        await client.stop_inventory()
+        await client.disconnect()
+
+
+async def test_inventory_takes_over_a_manual_scan(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    logic.tags_to_stream = []
+    await client.start_inventory()
+    assert client._tag_queue is None
+    async with aclosing(client.inventory()) as stream:
+        consumer = asyncio.create_task(anext(stream))
+        await asyncio.sleep(0.05)
+        assert logic.push is not None
+        logic.push(build_frame(0x83, stream_tag_record()))
+        tag = await consumer
+    assert tag.epc == bytes(range(1, 13))
+    assert client.inventory_active is False
+    starts = [command for command, _ in logic.received if command == Command.START_INVENTORY]
+    assert len(starts) == 1
+
+
 async def test_tag_without_a_callback_or_queue_is_ignored(
     reader_server: tuple[FakeReaderLogic, int],
 ) -> None:
@@ -1253,6 +1298,14 @@ async def test_connect_failure_raises_a_connection_error() -> None:
     client = ChainwayClient("socket://127.0.0.1:1")
     with pytest.raises(ChainwayConnectionError, match="could not open"):
         await client.connect()
+
+
+@pytest.mark.parametrize("url", ["socket://127.0.0.1", "socket://127.0.0.1:99999"])
+async def test_malformed_url_raises_a_connection_error(url: str) -> None:
+    client = ChainwayClient(url)
+    with pytest.raises(ChainwayConnectionError, match="could not open"):
+        await client.connect()
+    assert client.connected is False
 
 
 async def test_second_connect_is_a_noop(client: ChainwayClient) -> None:

@@ -371,6 +371,115 @@ async def test_bare_zero_status_reply_raises_unsupported(
         await client.get_temperature_protect()
 
 
+@pytest.mark.parametrize(
+    ("command", "read"),
+    [
+        (Command.GET_VERSION, ChainwayClient.get_version),
+        (Command.STM32_VERSION, ChainwayClient.get_stm32_version),
+        (Command.HARDWARE_VERSION, ChainwayClient.get_hardware_version),
+        (Command.GET_DEVICE_ID, ChainwayClient.get_device_id),
+        (Command.GET_TEMPERATURE, ChainwayClient.get_temperature),
+        (Command.ANTENNA_CONNECTION_STATE, ChainwayClient.get_antenna_connection_state),
+        (Command.VERIFY_VOLTAGE, ChainwayClient.verify_voltage),
+        (Command.GET_POWER, ChainwayClient.get_rf_power),
+        (Command.GET_RETURN_LOSS, ChainwayClient.get_return_loss),
+        (Command.GET_GEN2_PARAMETERS, ChainwayClient.get_gen2_parameters),
+        (Command.GET_TAG_FOCUS, ChainwayClient.get_tag_focus),
+        (Command.GET_ANTENNA_MASK, ChainwayClient.get_antenna_mask),
+        (Command.SINGLE_INVENTORY, ChainwayClient.single_inventory),
+        (Command.READ_COLLECTED_TAGS, ChainwayClient.read_collected_tags),
+    ],
+)
+async def test_bare_zero_read_raises_unsupported(
+    client: ChainwayClient,
+    reader_server: tuple[FakeReaderLogic, int],
+    command: Command,
+    read: Callable[[ChainwayClient], object],
+) -> None:
+    logic, _ = reader_server
+    logic._responders[command] = lambda _payload: b"\x00"
+    with pytest.raises(ChainwayUnsupportedCommandError):
+        await read(client)  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    ("command", "reply", "read"),
+    [
+        (Command.GET_REGION, b"\x01\x99", ChainwayClient.get_region),
+        (Command.GET_RF_LINK, b"\x01\x00\x99", ChainwayClient.get_rf_link),
+        (Command.SET_PROTOCOL_TYPE, b"\x01\x09", ChainwayClient.get_protocol_type),
+        (Command.GET_INVENTORY_MODE, b"\x01\x0a\x00\x00", ChainwayClient.get_inventory_mode),
+        (Command.GET_GEN2_PARAMETERS, b"\xe0\x00\x00\x00", ChainwayClient.get_gen2_parameters),
+    ],
+)
+async def test_unknown_reply_values_raise_a_response_error(
+    client: ChainwayClient,
+    reader_server: tuple[FakeReaderLogic, int],
+    command: Command,
+    reply: bytes,
+    read: Callable[[ChainwayClient], object],
+) -> None:
+    logic, _ = reader_server
+    logic._responders[command] = lambda _payload: reply
+    with pytest.raises(ChainwayResponseError):
+        await read(client)  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    ("sub", "reply", "read"),
+    [
+        (0x02, b"\x02\xc0\xa8\x01\x01\x00\x00", ChainwayClient.get_reader_address),
+        (0x06, b"\x06\x09", ChainwayClient.get_work_mode),
+        (0x0C, b"\x0c\x09\x00\x64\x00\x64\x00", ChainwayClient.get_trigger_config),
+        (0x0C, b"\x0c\x00\x00\x64\x00\x64\x09", ChainwayClient.get_trigger_config),
+    ],
+)
+async def test_unknown_config_reply_values_raise_a_response_error(
+    client: ChainwayClient,
+    reader_server: tuple[FakeReaderLogic, int],
+    sub: int,
+    reply: bytes,
+    read: Callable[[ChainwayClient], object],
+) -> None:
+    logic, _ = reader_server
+    logic._config_responders[sub] = lambda _payload: reply
+    with pytest.raises(ChainwayResponseError, match=r"unknown|invalid"):
+        await read(client)  # type: ignore[misc]
+
+
+async def test_empty_fixed_frequency_table_is_not_unsupported(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    logic._responders[Command.GET_FIXED_FREQUENCY] = lambda _payload: b"\x00"
+    assert await client.get_fixed_frequency() == ()
+
+
+async def test_tag_ack_commands_decode_the_tag_error_code(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
+) -> None:
+    logic, _ = reader_server
+    logic._responders[Command.SET_QT] = lambda _payload: b"\x00\x01"
+    logic._responders[Command.SET_PROTECTED_MODE] = lambda _payload: b"\x00\x01"
+    with pytest.raises(ChainwayResponseError, match="error code 0x01: the tag rejected"):
+        await client.set_qt(0x01)
+    with pytest.raises(ChainwayResponseError, match="error code 0x01: the tag rejected"):
+        await client.set_protected_mode(protected=False, short_range=False)
+    logic._responders[Command.SET_PROTECTED_MODE] = lambda _payload: b"\x01\x00"
+    await client.set_protected_mode(protected=False, short_range=False)
+
+
+@pytest.mark.parametrize("sub", [0x02, 0x04])
+async def test_bare_zero_address_read_raises_unsupported(
+    client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int], sub: int
+) -> None:
+    logic, _ = reader_server
+    logic._config_responders[sub] = lambda _payload: b"\x00"
+    read = client.get_reader_address if sub == 0x02 else client.get_destination_address
+    with pytest.raises(ChainwayUnsupportedCommandError):
+        await read()
+
+
 async def test_failing_protocol_type_ack_raises(
     client: ChainwayClient, reader_server: tuple[FakeReaderLogic, int]
 ) -> None:
@@ -536,10 +645,10 @@ async def test_external_stop_ends_a_waiting_iterator(
 async def test_inventory_raises_when_the_start_lost_the_link(
     client: ChainwayClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def lost_start(*, phase: bool = False, frequency: bool = False) -> None:  # noqa: ARG001
+    async def lost_start(*, phase: bool, frequency: bool, stream: bool) -> None:  # noqa: ARG001
         return
 
-    monkeypatch.setattr(client, "start_inventory", lost_start)
+    monkeypatch.setattr(client, "_start_inventory", lost_start)
     stream = client.inventory()
     with pytest.raises(ChainwayConnectionError, match="the link was lost"):
         await _anext(stream)

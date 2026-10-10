@@ -2,7 +2,8 @@
 
 The client speaks the reader wire protocol over any serialx URL: a
 device path for RS-232, ``socket://host:8888`` for TCP, and the
-rfc2217 or ESPHome proxies.
+rfc2217 proxy. ESPHome serial proxies need the ``serialx[esphome]``
+extra.
 """
 
 from importlib.metadata import PackageNotFoundError as _PackageNotFoundError

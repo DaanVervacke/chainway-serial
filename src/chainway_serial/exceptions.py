@@ -16,7 +16,12 @@ class ChainwayTimeoutError(ChainwayError, TimeoutError):
 
 
 class ChainwayProtocolError(ChainwayError):
-    """A frame violated the wire format: bad header, length, checksum or tail."""
+    """A frame violated the wire format.
+
+    The client raises it when a request payload pushes the frame
+    outside the 8 to 2048 byte length window. Malformed inbound frames
+    are dropped and never raise.
+    """
 
 
 class ChainwayResponseError(ChainwayError):

@@ -7,6 +7,7 @@ import logging
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Collection, Coroutine
 from contextlib import suppress
+from enum import IntEnum
 from types import TracebackType
 from typing import Self, TypeVar
 
@@ -212,22 +213,41 @@ def _require_tag_success(payload: bytes, command: Command) -> None:
     raise ChainwayResponseError(msg)
 
 
+def _member[Member: IntEnum](enum_type: type[Member], value: int, name: str) -> Member:
+    try:
+        return enum_type(value)
+    except ValueError as err:
+        msg = f"the reader reported an unknown {name} code {value:#04x}"
+        raise ChainwayResponseError(msg) from err
+
+
+def _require_tag_ack(payload: bytes, command: Command) -> None:
+    if payload[:1] == bytes((STATUS_OK,)):
+        return
+    _require_tag_success(payload, command)
+
+
 class ChainwayClient:
     """Communicate with one Chainway UR4 reader.
 
     The client speaks the reader wire protocol over any serialx URL: a
     device path for RS-232, ``socket://host:8888`` for TCP, and the
-    rfc2217 or ESPHome proxies. One request runs at a time, tag
-    sightings stream through :meth:`inventory`, and after a link drop
-    the next command reconnects on its own.
+    rfc2217 proxy. ESPHome serial proxies need the ``serialx[esphome]``
+    extra. One request runs at a time, tag sightings stream through
+    :meth:`inventory`, and after a link drop the next command
+    reconnects on its own.
 
     Every command can raise :class:`ChainwayConnectionError`,
     :class:`ChainwayTimeoutError` and :class:`ChainwayResponseError`.
     A bare 00 reply raises :class:`ChainwayUnsupportedCommandError`, a
-    subclass of :class:`ChainwayResponseError`. While a continuous
-    inventory runs, every command except stop inventory raises
-    :class:`ChainwayInventoryActiveError`. The ``Raises`` section of a
-    method lists only the errors specific to it.
+    subclass of :class:`ChainwayResponseError`. A request payload too
+    long for one frame raises :class:`ChainwayProtocolError`. While a
+    continuous inventory runs, every command raises
+    :class:`ChainwayInventoryActiveError`, except stop inventory and
+    the start of a scan. Every tag operation raises :class:`ValueError`
+    when a password is not four bytes. The ``Raises`` section of a
+    method lists its own failure cases and does not repeat every
+    shared error.
     """
 
     def __init__(
@@ -318,7 +338,8 @@ class ChainwayClient:
         connections.
 
         Raises:
-            ChainwayConnectionError: The URL could not be opened.
+            ChainwayConnectionError: The URL is malformed or could not
+                be opened.
         """
         async with self._lifecycle_lock:
             if self._transport is not None:
@@ -339,7 +360,7 @@ class ChainwayClient:
                     xonxoff=self._xonxoff,
                     rtscts=self._rtscts,
                 )
-            except (serialx.SerialException, OSError) as err:
+            except (serialx.SerialException, OSError, ValueError) as err:
                 self._discarding_tags = False
                 msg = f"could not open {self.url}: {err}"
                 raise ChainwayConnectionError(msg) from err
@@ -407,11 +428,13 @@ class ChainwayClient:
     async def get_version(self) -> FirmwareVersion:
         """Return the UHF module firmware version."""
         payload = await self._request(Command.GET_VERSION)
+        _reject_unsupported(payload, Command.GET_VERSION)
         return parse_version(payload)
 
     async def get_stm32_version(self) -> FirmwareVersion:
         """Return the STM32 microcontroller version."""
         payload = await self._request(Command.STM32_VERSION)
+        _reject_unsupported(payload, Command.STM32_VERSION)
         return parse_version(payload)
 
     async def get_hardware_version(self) -> FirmwareVersion:
@@ -420,25 +443,31 @@ class ChainwayClient:
         On an Ex10 module this is the version of the Ex10 chip.
         """
         payload = await self._request(Command.HARDWARE_VERSION)
+        _reject_unsupported(payload, Command.HARDWARE_VERSION)
         return parse_version(payload)
 
     async def get_device_id(self) -> bytes:
         """Return the four-byte device ID.
 
-        The UR4 mainboard answers with bytes 3 to 6 of the reader MAC
-        address.
+        The UR4 mainboard answers it. On the development unit it
+        matches bytes 3 to 6 of the MAC address in every capture but
+        the first two of the session, so the source of the value is
+        unverified.
         """
         payload = await self._request(Command.GET_DEVICE_ID)
+        _reject_unsupported(payload, Command.GET_DEVICE_ID)
         return parse_device_id(payload)
 
     async def get_temperature(self) -> float:
         """Return the reader temperature in degrees C."""
         payload = await self._request(Command.GET_TEMPERATURE)
+        _reject_unsupported(payload, Command.GET_TEMPERATURE)
         return parse_temperature(payload)
 
     async def get_antenna_connection_state(self) -> AntennaState:
         """Return which antennas are connected."""
         payload = await self._request(Command.ANTENNA_CONNECTION_STATE)
+        _reject_unsupported(payload, Command.ANTENNA_CONNECTION_STATE)
         return AntennaState(connected=parse_antenna_connection_state(payload), raw=payload)
 
     async def get_battery_level(self) -> int:
@@ -454,6 +483,7 @@ class ChainwayClient:
         SDK documents the unit of the value.
         """
         payload = await self._request(Command.VERIFY_VOLTAGE, VERIFY_VOLTAGE_PAYLOAD)
+        _reject_unsupported(payload, Command.VERIFY_VOLTAGE)
         return parse_voltage(payload)
 
     async def set_module_parameter(self, param_type: int, param_id: int, data: bytes) -> None:
@@ -575,6 +605,9 @@ class ChainwayClient:
     async def set_rf_power(self, power_dbm: float, *, antenna: int = 1, save: bool = True) -> None:
         """Set the transmit and receive power of one antenna.
 
+        The UR4 also applies the value to every higher antenna that has
+        not been written on its own since the last factory restore.
+
         Args:
             power_dbm: Power in dBm applied to both directions.
             antenna: One-based antenna number.
@@ -598,6 +631,9 @@ class ChainwayClient:
     ) -> None:
         """Set separate receive and transmit power for one antenna.
 
+        The UR4 also applies the values to every higher antenna that
+        has not been written on its own since the last factory restore.
+
         Raises:
             ValueError: The antenna number or a power value is out of
                 range.
@@ -609,6 +645,7 @@ class ChainwayClient:
     async def get_rf_power(self) -> tuple[AntennaPower, ...]:
         """Return the read and write power of every antenna."""
         payload = await self._request(Command.GET_POWER)
+        _reject_unsupported(payload, Command.GET_POWER)
         return parse_power_records(payload)
 
     async def set_fixed_frequency(self, frequency_khz: int) -> None:
@@ -617,10 +654,14 @@ class ChainwayClient:
         The setting lasts until power off.
 
         Raises:
-            ValueError: The frequency does not fit the 3-byte field.
+            ValueError: The frequency is 0 or does not fit the 3-byte
+                field.
         """
         if not 1 <= frequency_khz <= MAX_FIXED_FREQUENCY_KHZ:
-            msg = f"frequency must be at most {MAX_FIXED_FREQUENCY_KHZ} kHz, got {frequency_khz}"
+            msg = (
+                f"frequency must be between 1 and {MAX_FIXED_FREQUENCY_KHZ} kHz,"
+                f" got {frequency_khz}"
+            )
             raise ValueError(msg)
         payload = b"\x01" + frequency_khz.to_bytes(FREQUENCY_BYTES)
         response = await self._request(Command.SET_FIXED_FREQUENCY, payload)
@@ -630,7 +671,8 @@ class ChainwayClient:
         """Return the fixed frequency table in kHz.
 
         The module currently supports one frequency, the table
-        shape allows more.
+        shape allows more. Without a fixed frequency, as after a power
+        cycle, the reader answers a count of 0 and the table is empty.
         """
         payload = await self._request(Command.GET_FIXED_FREQUENCY)
         return parse_fixed_frequency(payload)
@@ -645,7 +687,7 @@ class ChainwayClient:
         """Return the regulatory frequency region."""
         payload = await self._request(Command.GET_REGION)
         require_status_header(payload, 2, STATUS_OK, "region")
-        return Region(payload[1])
+        return _member(Region, payload[1], "region")
 
     async def set_carrier_wave(self, *, enabled: bool) -> None:
         """Turn the continuous carrier wave on or off."""
@@ -661,6 +703,7 @@ class ChainwayClient:
         with an antenna attached, and ports 2 to 4 read 0.
         """
         payload = await self._request(Command.GET_RETURN_LOSS)
+        _reject_unsupported(payload, Command.GET_RETURN_LOSS)
         return parse_return_loss(payload)
 
     async def set_gen2_parameters(self, parameters: Gen2Parameters) -> None:
@@ -676,6 +719,7 @@ class ChainwayClient:
     async def get_gen2_parameters(self) -> Gen2Parameters:
         """Return the Gen2 inventory parameters."""
         payload = await self._request(Command.GET_GEN2_PARAMETERS)
+        _reject_unsupported(payload, Command.GET_GEN2_PARAMETERS)
         return unpack_gen2_parameters(payload)
 
     async def set_uart_baudrate(self, baudrate: UartBaudRate) -> None:
@@ -725,7 +769,7 @@ class ChainwayClient:
         """Return the recommended RF link combination."""
         payload = await self._request(Command.GET_RF_LINK, b"\x00\x00")
         require_status_header(payload, 3, STATUS_OK, "RF")
-        return RfLink(payload[2])
+        return _member(RfLink, payload[2], "RF link")
 
     async def set_fast_id(self, *, enabled: bool) -> None:
         """Turn FastID on or off.
@@ -752,6 +796,7 @@ class ChainwayClient:
     async def get_tag_focus(self) -> bool:
         """Return whether TagFocus is on."""
         payload = await self._request(Command.GET_TAG_FOCUS, b"\x00\x00")
+        _reject_unsupported(payload, Command.GET_TAG_FOCUS)
         require_minimum_length(payload, 2, "TagFocus")
         return payload[1] == 0x01
 
@@ -770,7 +815,7 @@ class ChainwayClient:
             Command.SET_PROTOCOL_TYPE, bytes((ProtocolTypeSelector.GET, 0x00))
         )
         require_status_header(payload, 2, ProtocolTypeSelector.GET, "protocol")
-        return ProtocolType(payload[1])
+        return _member(ProtocolType, payload[1], "protocol type")
 
     async def set_inventory_mode(
         self,
@@ -797,7 +842,7 @@ class ChainwayClient:
         payload = await self._request(Command.GET_INVENTORY_MODE, b"\x00\x00")
         require_status_header(payload, 4, STATUS_OK, "inventory")
         return InventoryModeConfig(
-            mode=InventoryMode(payload[1]),
+            mode=_member(InventoryMode, payload[1], "inventory mode"),
             user_address=payload[2],
             user_length=payload[3],
         )
@@ -824,6 +869,7 @@ class ChainwayClient:
     async def get_antenna_mask(self) -> int:
         """Return the 16-bit antenna enable mask."""
         payload = await self._request(Command.GET_ANTENNA_MASK)
+        _reject_unsupported(payload, Command.GET_ANTENNA_MASK)
         require_minimum_length(payload, 2, "antenna")
         return payload[0] << 8 | payload[1]
 
@@ -914,8 +960,14 @@ class ChainwayClient:
         self._quiet_until = time.monotonic() + RESTORE_COMMIT_DELAY
 
     async def single_inventory(self) -> Tag | None:
-        """Inventory once and return the tag, or None without a tag."""
+        """Inventory once and return the tag.
+
+        Returns None when the reader answers without a tag record. A UR4
+        without an antenna does not answer at all, so the call raises
+        :class:`ChainwayTimeoutError` there.
+        """
         payload = await self._request(Command.SINGLE_INVENTORY, SINGLE_INVENTORY_PAYLOAD)
+        _reject_unsupported(payload, Command.SINGLE_INVENTORY)
         if not payload:
             return None
         return parse_tag_record(payload, with_antenna=True, received_at=now_utc())
@@ -929,7 +981,8 @@ class ChainwayClient:
         reporting mode: the SDKs send ``00 00`` for a normal scan,
         and the 2025 Java SDK defines ``FF FF`` for phase reporting,
         ``FF FE`` for frequency point reporting and ``FF FD`` for
-        both.
+        both. The sightings of a scan started here go to the
+        ``on_tag`` callback.
 
         Args:
             phase: Report the tag phase in degrees, 0 to 359, in every
@@ -938,16 +991,21 @@ class ChainwayClient:
             frequency: Report the channel frequency in kHz in every
                 sighting.
         """
+        await self._start_inventory(phase=phase, frequency=frequency, stream=False)
+
+    async def _start_inventory(self, *, phase: bool, frequency: bool, stream: bool) -> None:
         await self._ensure_connected()
         async with self._lock:
             if self._inventory_active:
+                if stream and self._tag_queue is None:
+                    self._tag_queue = asyncio.Queue()
                 return
             await self._wait_for_commit()
             transport = self._transport
             if transport is None:
                 msg = "the link is closed"
                 raise ChainwayConnectionError(msg)
-            self._tag_queue = asyncio.Queue()
+            self._tag_queue = asyncio.Queue() if stream else None
             if phase and frequency:
                 payload = START_INVENTORY_PHASE_AND_FREQUENCY_PAYLOAD
             elif phase:
@@ -996,7 +1054,10 @@ class ChainwayClient:
         Starts the scan on first iteration and stops it on exit. Close
         the iterator with :class:`contextlib.aclosing` when breaking out
         early, otherwise the stop frame is only sent once the generator
-        is collected.
+        is collected. When a scan from :meth:`start_inventory` already
+        runs, the iterator takes over its sightings and stops it on
+        exit. The scan keeps its own reporting flags, so ``phase`` and
+        ``frequency`` have no effect then.
 
         Args:
             phase: Report the tag phase in degrees in every sighting.
@@ -1006,7 +1067,7 @@ class ChainwayClient:
         Raises:
             ChainwayConnectionError: The link dropped mid-scan.
         """
-        await self.start_inventory(phase=phase, frequency=frequency)
+        await self._start_inventory(phase=phase, frequency=frequency, stream=True)
         queue = self._tag_queue
         if queue is None:
             msg = "the link was lost"
@@ -1068,8 +1129,8 @@ class ChainwayClient:
         """Write to one tag memory bank.
 
         Raises:
-            ValueError: The data length is odd or the window is
-                invalid.
+            ValueError: The data is empty or of odd length, or the
+                window is invalid.
             ChainwayResponseError: The reader reported a failure.
         """
         tail = _word_window(bank, word_address, _word_count_of(data)) + data
@@ -1089,8 +1150,8 @@ class ChainwayClient:
         """Write to one tag memory bank with the block write command.
 
         Raises:
-            ValueError: The data length is odd or the window is
-                invalid.
+            ValueError: The data is empty or of odd length, or the
+                window is invalid.
             ChainwayResponseError: The reader reported a failure.
         """
         tail = _word_window(bank, word_address, _word_count_of(data)) + data
@@ -1129,6 +1190,7 @@ class ChainwayClient:
         """Lock tag memory banks with one lock mode.
 
         Raises:
+            ValueError: No bank was selected.
             ChainwayResponseError: The reader reported a failure.
         """
         payload = build_tag_operation_payload(
@@ -1208,13 +1270,14 @@ class ChainwayClient:
                 pick the tag.
 
         Raises:
-            ChainwayResponseError: The reader did not acknowledge the
-                command.
+            ValueError: The password is not four bytes.
+            ChainwayResponseError: The reader reported a failure, with
+                the tag error code in the message.
         """
         tail = bytes((int(protected), int(short_range)))
         payload = build_tag_operation_payload(access_password, tag_filter, tail)
         response = await self._request(Command.SET_PROTECTED_MODE, payload)
-        _require_ack(response, Command.SET_PROTECTED_MODE)
+        _require_tag_ack(response, Command.SET_PROTECTED_MODE)
 
     async def read_block_permalock(
         self,
@@ -1313,14 +1376,15 @@ class ChainwayClient:
                 pick the tag.
 
         Raises:
-            ValueError: The QT value does not fit one byte.
-            ChainwayResponseError: The reader did not acknowledge the
-                write.
+            ValueError: The QT value does not fit one byte or the
+                password is not four bytes.
+            ChainwayResponseError: The reader reported a failure, with
+                the tag error code in the message.
         """
         _require_byte("QT value", qt_data)
         payload = build_tag_operation_payload(access_password, tag_filter, bytes((qt_data,)))
         response = await self._request(Command.SET_QT, payload)
-        _require_ack(response, Command.SET_QT)
+        _require_tag_ack(response, Command.SET_QT)
 
     async def get_qt(
         self,
@@ -1394,8 +1458,8 @@ class ChainwayClient:
         """Write to the QT memory of one tag.
 
         Raises:
-            ValueError: The QT value is invalid, the data length is
-                odd or the window is invalid.
+            ValueError: The QT value is invalid, the data is empty or
+                of odd length, or the window is invalid.
             ChainwayResponseError: The reader reported a failure.
         """
         _require_byte("QT value", qt_data)
@@ -1635,6 +1699,7 @@ class ChainwayClient:
         in command and in auto work mode alike.
         """
         payload = await self._request(Command.READ_COLLECTED_TAGS)
+        _reject_unsupported(payload, Command.READ_COLLECTED_TAGS)
         return parse_collected_tags(payload)
 
     async def read_collected_tags_full(self) -> CollectedTagsFull:
@@ -1696,8 +1761,9 @@ class ChainwayClient:
 
         The response layout follows the Android demo decode: a one
         byte record count, then per record one length byte and the raw
-        EPC bytes. No SDK for the UR4 decodes it, so the shape stays
-        unverified until live traffic confirms it.
+        EPC bytes. No SDK for the UR4 decodes it. UR4 firmware 7.40.1
+        answers a bare 00 byte, which parses as zero records, so the
+        method returns an empty tuple there.
         """
         payload = await self._request(
             Command.READ_FLASH_TAGS, bytes((FlashDataSubcommand.READ_ALL,))
@@ -1705,7 +1771,12 @@ class ChainwayClient:
         return parse_flash_tags(payload)
 
     async def set_reader_address(self, address: ReaderAddress) -> None:
-        """Set the reader IP and port, with optional mask and gateway."""
+        """Set the reader IP and port, with optional mask and gateway.
+
+        :meth:`get_reader_address` reads the new values back at once,
+        but the reader only moves to the new address after
+        :meth:`software_reset`.
+        """
         payload = build_reader_address_payload(ConfigSubcommand.SET_READER_ADDRESS, address)
         response = await self._request(Command.CONFIG, payload)
         _require_ack(response, Command.CONFIG)
@@ -1713,6 +1784,7 @@ class ChainwayClient:
     async def get_reader_address(self) -> ReaderAddress:
         """Return the reader IP, port, mask and gateway."""
         payload = await self._request(Command.CONFIG, bytes((ConfigSubcommand.GET_READER_ADDRESS,)))
+        _reject_unsupported(payload, Command.CONFIG)
         return parse_reader_address(payload, ConfigSubcommand.GET_READER_ADDRESS)
 
     async def set_destination_address(self, address: ReaderAddress) -> None:
@@ -1726,6 +1798,7 @@ class ChainwayClient:
         payload = await self._request(
             Command.CONFIG, bytes((ConfigSubcommand.GET_DESTINATION_ADDRESS,))
         )
+        _reject_unsupported(payload, Command.CONFIG)
         return parse_reader_address(payload, ConfigSubcommand.GET_DESTINATION_ADDRESS)
 
     async def set_work_mode(self, mode: WorkMode) -> None:
@@ -1746,7 +1819,7 @@ class ChainwayClient:
         """Return who drives the inventory."""
         payload = await self._request(Command.CONFIG, bytes((ConfigSubcommand.GET_WORK_MODE,)))
         require_status_header(payload, 2, ConfigSubcommand.GET_WORK_MODE, "work")
-        return WorkMode(payload[1])
+        return _member(WorkMode, payload[1], "work mode")
 
     async def set_buzzer(self, *, enabled: bool) -> None:
         """Turn the buzzer on or off.
@@ -1785,7 +1858,9 @@ class ChainwayClient:
     async def set_trigger_config(self, config: TriggerConfig) -> None:
         """Set the trigger work mode timing.
 
-        The mainboard keeps the setting across a power cycle.
+        The wire carries both times in 10 ms steps, so the client rounds
+        them down to a multiple of 10 ms. The mainboard keeps the
+        setting across a power cycle.
         """
         work_units = config.work_time_ms // 10
         interval_units = config.min_interval_ms // 10
@@ -1803,10 +1878,10 @@ class ChainwayClient:
         payload = await self._request(Command.CONFIG, bytes((ConfigSubcommand.GET_TRIGGER_CONFIG,)))
         require_status_header(payload, 7, ConfigSubcommand.GET_TRIGGER_CONFIG, "trigger")
         return TriggerConfig(
-            input=TriggerInput(payload[1]),
+            input=_member(TriggerInput, payload[1], "trigger input"),
             work_time_ms=(payload[2] << 8 | payload[3]) * 10,
             min_interval_ms=(payload[4] << 8 | payload[5]) * 10,
-            output=OutputRoute(payload[6]),
+            output=_member(OutputRoute, payload[6], "output route"),
         )
 
     async def set_volume(self, volume: int) -> None:
@@ -1836,8 +1911,8 @@ class ChainwayClient:
     async def scan_barcode(self) -> bytes | None:
         """Scan one barcode with the imager and return its bytes.
 
-        A response without a barcode, the three byte form ``02 02 00``
-        or a bare subcommand echo, returns None.
+        A response without a barcode returns None: the three byte form
+        ``02 02 00`` or any response shorter than three bytes.
         """
         payload = await self._request(Command.PERIPHERAL, bytes((PeripheralSubcommand.BARCODE,)))
         require_status_header(payload, 1, PeripheralSubcommand.BARCODE, "barcode")

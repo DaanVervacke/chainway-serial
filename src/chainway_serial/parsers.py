@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Collection, Iterable
+from collections.abc import Callable, Collection, Iterable
 from datetime import UTC, datetime
 
 from .const import (
@@ -362,9 +362,8 @@ def parse_tag_record(
     3-byte frequency in kHz, followed by the RSSI pair and the
     optional antenna byte. The phase is in degrees, 0 to 359. The
     RSSI pair is a 16-bit two's complement
-    of dBm times ten, as the official protocol document defines it,
-    and values outside the SDK validity window of 20 dBm span parse
-    as None.
+    of dBm times ten, as the official protocol document defines it.
+    Values of 0 dBm or more and of -200 dBm or less parse as None.
 
     Args:
         record: The raw record bytes: PC, then EPC, then the optional
@@ -380,8 +379,8 @@ def parse_tag_record(
             in kHz after the phase block.
 
     Raises:
-        ChainwayResponseError: The record is too short or carries no
-            EPC.
+        ChainwayResponseError: The record is shorter than three bytes
+            or than the EPC length its PC word announces.
     """
     require_minimum_length(record, MIN_TAG_RECORD_SIZE, "tag record")
     epc_length = (record[0] >> 3) * 2 + 2
@@ -402,7 +401,7 @@ def parse_tag_record(
         tail_start = epc_length + TID_SIZE
         if len(record) - USER_BLOCK_MARGIN > epc_length + TID_SIZE:
             tail_start = len(record) - trailing
-            user_data = record[epc_length + TID_SIZE : tail_start]
+            user_data = record[epc_length + TID_SIZE : tail_start] or None
     else:
         tail_start = epc_length
     rssi_start = tail_start + reporting_size
@@ -433,7 +432,7 @@ def parse_tag_record(
 
 
 def parse_collected_tags(payload: bytes) -> CollectedTags:
-    """Parse the collected tag batch of a 0xE1 or 0xEC response.
+    """Parse the collected tag batch of a 0xE1 response.
 
     A payload shorter than five bytes carries only the 16-bit storage
     index and marks the read as invalid, so the tags tuple comes back
@@ -540,14 +539,28 @@ def pack_gen2_parameters(parameters: Gen2Parameters) -> bytes:
     )
 
 
+def _decoded[Model](
+    name: str, payload: bytes, model: Callable[..., Model], **fields: object
+) -> Model:
+    try:
+        return model(**fields)
+    except ValueError as err:
+        msg = f"the reader sent an invalid {name} payload {payload!r}: {err}"
+        raise ChainwayResponseError(msg) from err
+
+
 def unpack_gen2_parameters(payload: bytes) -> Gen2Parameters:
     """Unpack the four bytes of a 0x23 response into Gen2 parameters.
 
     Raises:
-        ChainwayResponseError: The payload is not four bytes.
+        ChainwayResponseError: The payload is not four bytes or
+            carries a value outside the documented ranges.
     """
     require_exact_length(payload, 4, "Gen2")
-    return Gen2Parameters(
+    return _decoded(
+        "Gen2",
+        payload,
+        Gen2Parameters,
         target=payload[0] >> 5 & 7,
         action=payload[0] >> 2 & 7,
         truncate=bool(payload[0] >> 1 & 1),
@@ -566,10 +579,18 @@ def unpack_gen2_parameters(payload: bytes) -> Gen2Parameters:
 
 
 def parse_reader_address(payload: bytes, subcommand: int) -> ReaderAddress:
-    """Parse the address payload of a 0xA2 response."""
+    """Parse the address payload of a 0xA2 response.
+
+    Raises:
+        ChainwayResponseError: The payload is truncated, echoes a
+            different subcommand or carries an invalid address.
+    """
     require_status_header(payload, READER_ADDRESS_SIZE, subcommand, "address")
     long_form = len(payload) >= READER_ADDRESS_LONG_SIZE
-    return ReaderAddress(
+    return _decoded(
+        "address",
+        payload,
+        ReaderAddress,
         ip=".".join(str(byte) for byte in payload[1:5]),
         port=payload[5] << 8 | payload[6],
         subnet_mask=".".join(str(byte) for byte in payload[7:11]) if long_form else None,
