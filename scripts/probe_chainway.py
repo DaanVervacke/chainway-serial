@@ -57,6 +57,17 @@ async def _barcode(client: ChainwayClient) -> str | None:
     return scanned.hex() if scanned else None
 
 
+async def _collected(client: ChainwayClient) -> dict[str, object]:
+    """Render the collected EPCs."""
+    collected = await client.read_collected_tags()
+    return {"index": collected.index, "tags": [epc.hex() for epc in collected.tags]}
+
+
+async def _flash_tags(client: ChainwayClient) -> list[str]:
+    """Render the EPCs pulled from the flash storage."""
+    return [epc.hex() for epc in await client.read_collected_tags_from_flash()]
+
+
 async def _collected_full(client: ChainwayClient) -> dict[str, object]:
     """Render the collected tags with full records."""
     collected = await client.read_collected_tags_full()
@@ -119,14 +130,21 @@ READS: tuple[tuple[str, Callable[[ChainwayClient], Awaitable[object]]], ...] = (
     ("volume", lambda c: c.get_volume()),
     ("reader_address", lambda c: _fields(c.get_reader_address())),
     ("destination_address", lambda c: _fields(c.get_destination_address())),
+    ("protocol_type", lambda c: _name(c.get_protocol_type())),
+    ("fast_inventory_mode", lambda c: c.get_fast_inventory_mode()),
+    ("antenna_1_work_time", lambda c: c.get_antenna_work_time(1)),
+    ("idle_sleep_time", lambda c: c.get_reader_idle_sleep_time()),
     ("collected_count", lambda c: c.get_collected_tag_count()),
+    ("new_collected_count", lambda c: c.get_new_collected_tag_count()),
     ("barcode", _barcode),
+    ("collected", _collected),
     ("collected_full", _collected_full),
+    ("flash_tags", _flash_tags),
 )
 
 
 async def probe_reader(client: ChainwayClient) -> dict[str, object]:
-    """Run every read command against the reader and collect the results.
+    """Run every reader read command and collect the results.
 
     Each read is recorded on its own, so a command the reader rejects or
     never answers is recorded as an error and the probe continues.
@@ -158,7 +176,7 @@ async def main() -> None:
         readers = await discover_readers()
         for reader in readers:
             print(f"discovered {reader.mac} at {reader.ip}:{reader.port}")
-        print("pass a serialx URL, for example socket://192.168.99.200:8888")
+        print("pass a serialx URL, for example socket://192.168.99.202:8888")
         return
     url = sys.argv[1]
     client = ChainwayClient(url)

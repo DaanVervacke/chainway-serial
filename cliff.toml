@@ -11,7 +11,7 @@ Before 1.0, breaking changes ship as minor bumps.
 """
 body = """
 {% if version %}## [{{ version | trim_start_matches(pat="v") }}]{% else %}## [Unreleased]{% endif %}\
-{% if timestamp %} - {{ timestamp | date(format="%Y-%m-%d") }}{% endif %}
+{% if timestamp %} - {{ timestamp | date(format="%Y-%m-%d", timezone="Europe/Brussels") }}{% endif %}
 
 {% for group, commits in commits | group_by(attribute="group") %}\
 ### {{ group }}
@@ -42,6 +42,7 @@ filter_commits = true
 commit_parsers = [
     { message = "^chore: release", skip = true },
     { message = "^chore: regenerate the changelog", skip = true },
+    { message = "^chore: update the changelog", skip = true },
     { message = "^feat", group = "Features" },
     { message = "^fix", group = "Bug Fixes" },
     { message = "^docs", group = "Documentation" },

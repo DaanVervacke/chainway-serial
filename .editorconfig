@@ -1,8 +1,3 @@
-# EditorConfig, editor-agnostic whitespace baseline. https://editorconfig.org
-#
-# This is the floor under the formatting stack: it makes every editor agree on
-# charset, line endings, final newlines, and indentation before ruff runs.
-# Python and TOML use 4 spaces, YAML uses 2 spaces.
 root = true
 
 [*]
