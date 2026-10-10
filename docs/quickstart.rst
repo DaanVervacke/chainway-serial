@@ -29,7 +29,7 @@ Every command waits up to two seconds for a response by default. Pass
 While a continuous inventory runs, the reader answers no command
 except stop inventory. Other commands raise
 :class:`chainway_serial.ChainwayInventoryActiveError` until the scan
-ends.
+ends. Starting a scan while one runs is a no-op.
 
 Errors
 ------
@@ -52,4 +52,4 @@ Every exception derives from :class:`chainway_serial.ChainwayError`.
    * - ``ChainwayInventoryActiveError``
      - A continuous inventory is running
    * - ``ChainwayProtocolError``
-     - A frame broke the wire format
+     - A request payload is too long for one frame. Malformed frames from the reader are dropped instead

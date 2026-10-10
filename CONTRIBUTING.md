@@ -21,6 +21,8 @@ uv build
 uv audit --locked --preview-features audit-command
 ```
 
+After those, it checks that the `pyproject.toml` version equals the installed package version. After a version bump, run `uv sync` or the gate fails.
+
 Coverage measures branches in `src/` and requires `fail_under = 98`. `uv audit` needs network access.
 
 ## Live hardware tests
@@ -31,9 +33,9 @@ Coverage measures branches in `src/` and requires `fail_under = 98`. `uv audit` 
 CHAINWAY_URL=/dev/ttyUSB0 uv run pytest tests/hardware
 ```
 
-`test_live.py` changes reader settings, restores them and ends with a factory restore that keeps the buzzer setting. `test_tags.py` needs at least one Gen2 tag with a 32-bit USER bank on the antenna, such as an Impinj Monza R6-P. It restores every tag write and never kills, permalocks or deactivates a tag.
+`test_live.py` changes reader settings, restores them, reboots the reader with `software_reset` and ends with a factory restore. It writes the buzzer setting and the reader address back afterwards, and wipes every other stored setting. Over TCP it skips the factory restore, because the restore moves the reader to 192.168.99.202. `test_tags.py` needs at least one Gen2 tag with a 32-bit USER bank on the antenna, such as an Impinj Monza R6-P. It restores every tag write and never kills, permalocks or deactivates a tag. `test_tcp.py` runs only with a `socket://` URL. It opens competing connections, switches the reader to auto mode with UDP push and reboots it, restores the settings, and listens for discovery broadcasts on UDP port 1111.
 
-`scripts/probe_chainway.py` sends every read command and a three second inventory, and writes the answers to `captures/probe.json`. Without a URL it lists the readers UDP discovery finds.
+`scripts/probe_chainway.py` sends every reader read command and a three second inventory, but no tag read, and writes the answers to `captures/probe.json`. Before the inventory it switches the inventory mode to EPC, TID and USER without the save flag, so the previous mode returns at the next power cycle. Without a URL it lists the readers UDP discovery finds.
 
 ```bash
 uv run python -m scripts.probe_chainway /dev/ttyUSB0
@@ -52,7 +54,7 @@ Add all of the following:
 
 ## Changelog
 
-`CHANGELOG.md` is generated with git-cliff from conventional commit subjects. Never edit it by hand. `feat:` and `fix:` subjects become the Features and Bug Fixes entries, `docs:` and `chore:` subjects land in the Documentation and Maintenance sections, and every other type is left out. Regenerate with `git-cliff --output CHANGELOG.md` after committing. At release, rename the Unreleased heading to `## [X.Y.Z] - YYYY-MM-DD` and add the `[X.Y.Z]:` compare link at the bottom of the file, bump the version, commit, and tag `vX.Y.Z`. The next regeneration then renders the `[Unreleased]:` link from the new tag.
+`CHANGELOG.md` is generated with git-cliff from conventional commit subjects. Never edit it by hand. `feat:` and `fix:` subjects become the Features and Bug Fixes entries, `docs:` and `chore:` subjects land in the Documentation and Maintenance sections, and every other type is left out. Regenerate with `git-cliff --output CHANGELOG.md` and commit the result as `chore: regenerate the changelog`, a subject the changelog leaves out. At release, bump the version, run `uv sync`, render the release with `git-cliff --tag vX.Y.Z --output CHANGELOG.md`, commit as `chore: release vX.Y.Z`, tag `vX.Y.Z`, and push the tag. Publishing a GitHub release for the tag runs the release workflow, which uploads the package to PyPI. git-cliff writes the release heading and the compare links from the tags.
 
 ## Captures and confidential data
 

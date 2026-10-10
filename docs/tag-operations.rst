@@ -18,7 +18,9 @@ access password in words 2 and 3.
 
 A filter selects one tag by matching bits in a memory bank. Its address
 and length are in bits. Without a filter the reader picks a tag on its
-own:
+own. The example matches the TID of a sighting, which carries one only
+when the inventory mode includes the TID, for example
+``InventoryMode.EPC_TID``:
 
 .. code-block:: python
 
@@ -87,8 +89,9 @@ never answers again:
 Chip specific commands
 ----------------------
 
-These commands need a tag that supports them. Other tags answer error
-code ``0x01``.
+Authenticate and the block permalock commands need a tag that
+supports them. Other tags answer error code ``0x01``. A Monza R6-P
+accepts ``set_protected_mode`` with both modes off.
 
 .. code-block:: python
 

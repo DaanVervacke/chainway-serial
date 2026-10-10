@@ -36,7 +36,7 @@ body:
     attributes:
       label: Connection
       description: Which transport and URL you connect with.
-      placeholder: e.g. RS-232 on /dev/ttyUSB0, TCP on socket://192.168.99.200:8888
+      placeholder: e.g. RS-232 on /dev/ttyUSB0, TCP on socket://192.168.99.202:8888
     validations:
       required: true
   - type: textarea

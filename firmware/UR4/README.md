@@ -9,7 +9,7 @@ STM32F2, device ID 0x411, 512 KiB flash, 128 KiB SRAM, read protection level 0. 
 | File | Address | Size | Content |
 |---|---|---|---|
 | `ur4-mainboard-flash-full-v7.0.9.bin` | 0x08000000 | 512 KiB | Whole flash. Read twice with identical results, and identical to a dump taken before the factory reset. The three files below are slices of it |
-| `ur4-mainboard-bootloader-v1.2.1.bin` | 0x08000000 | 32 KiB | Flash sectors 0 to 2. Chainway bootloader, prints the boot console and the network block, jumps to 0x08010000 |
+| `ur4-mainboard-bootloader-v1.2.1.bin` | 0x08000000 | 32 KiB | Flash sectors 0 and 1. Chainway bootloader, prints the boot console and the network block, jumps to 0x08010000 |
 | `ur4-mainboard-settings.bin` | 0x0800C000 | 16 KiB | Flash sector 3. 31 bytes of stored settings, the rest erased |
 | `ur4-mainboard-application-v7.0.9.bin` | 0x08010000 | 64 KiB | Flash sector 4. Application, vector table at the start, reset handler 0x080144CD. Sectors 5 to 7 are erased |
 | `ur4-mainboard-sram-running-v7.0.9.bin` | 0x20000000 | 128 KiB | RAM of the running application with the module connected. 0x20000014 holds the module baud rate (115200), 0x20000009 the boot probe result (0x07) |
@@ -28,4 +28,4 @@ Not dumped. The module is only reachable from the mainboard over its UART, and t
 
 ## settings
 
-Every read command through the library over RS-232, before and after the factory reset. Both files are identical, so the unit was already at factory defaults.
+Read commands through the library over RS-232, before and after the factory reset. The dump leaves out `get_protocol_type`, `get_fast_inventory_mode`, `get_antenna_work_time` and most of the reads the UR4 does not support. Both files are identical, so the unit was already at factory defaults.

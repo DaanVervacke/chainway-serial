@@ -9,7 +9,7 @@ stops when the loop ends:
 
 .. code-block:: python
 
-   async with ChainwayClient("socket://192.168.99.200:8888") as client:
+   async with ChainwayClient("socket://192.168.99.202:8888") as client:
        async for tag in client.inventory():
            print(tag.epc.hex(), tag.rssi, tag.antenna)
 
@@ -25,12 +25,17 @@ sent immediately:
            if tag.epc.startswith(b"\xe2"):
                break
 
-Or drive the scan manually:
+Or drive the scan manually. The sightings then go to the ``on_tag``
+callback, see `Tag callbacks`_:
 
 .. code-block:: python
 
    await client.start_inventory()
    await client.stop_inventory()
+
+An ``inventory`` iteration that starts while such a scan runs takes
+over its sightings and stops the scan when the loop ends. The scan
+keeps the ``phase`` and ``frequency`` flags it started with.
 
 Phase and frequency reporting
 -----------------------------
@@ -51,7 +56,9 @@ the reader leaves the TID and USER data out of the sightings.
 Single inventory
 ----------------
 
-Scan once and return one tag or None:
+Scan once and return one tag, or None when the reader answers without
+one. A UR4 without an antenna does not answer, and the call raises
+:class:`chainway_serial.ChainwayTimeoutError`:
 
 .. code-block:: python
 
@@ -83,7 +90,7 @@ callback:
    def on_tag(tag) -> None:
        print(tag.epc.hex())
 
-   client = ChainwayClient("socket://192.168.99.200:8888", on_tag=on_tag)
+   client = ChainwayClient("socket://192.168.99.202:8888", on_tag=on_tag)
 
 The callback may be a plain function or a coroutine function. While an
 ``inventory`` iteration is active, its tags go to the iterator and the

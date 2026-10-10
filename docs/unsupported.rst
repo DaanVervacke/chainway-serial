@@ -16,13 +16,17 @@ Tag commands:
 * ``block_erase_tag``
 * ``deactivate_tag``
 * the Impinj Monza QT reads and writes: ``get_qt``, ``read_qt`` and
-  ``write_qt``
+  ``write_qt``, tested only with tags that lack QT support
 * the sensor tag commands: ``read_tag_sensor``, ``write_tag_calibration``,
   ``start_tag_logging``, ``stop_tag_logging``, ``check_tag_sensor_mode``,
   ``read_tag_sensor_voltage`` and ``read_tag_temperatures``
 * the collected tag storage: ``read_collected_tags_full``,
   ``get_collected_tag_count``, ``get_new_collected_tag_count`` and
   ``delete_collected_tags``
+
+``write_tag_calibration``, ``start_tag_logging``, ``stop_tag_logging``
+and ``delete_collected_tags`` were not sent to a UR4. They are listed
+because every other subcommand of their opcode answers a bare ``00``.
 
 Reader and module settings:
 
@@ -64,5 +68,8 @@ Untested
 ``set_module_parameter`` has not been sent to a UR4. Its parameter
 types and IDs are undocumented.
 
+Supported despite the name
+--------------------------
+
 ``set_buzzer`` and ``get_buzzer`` work. They switch the beep on tag
-reads.
+reads, unlike ``beep`` and ``stop_buzzer`` above.
