@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Before 1.0, breaking changes ship as minor bumps.
 
+## [0.2.2] - 2026-10-10
+
+### Bug Fixes
+
+- Deliver manual scan tags to the on_tag callback and map reader failures to the right errors
+
+### Documentation
+
+- Align the guides, protocol reference and contributor docs with the code
+
+### Maintenance
+
+- Accept uv 0.13
+- Probe every reader read and clean up the repo files
+
 ## [0.2.1] - 2026-10-10
 
 ### Bug Fixes
@@ -66,19 +81,8 @@ Before 1.0, breaking changes ship as minor bumps.
 
 ### Maintenance
 
-- Update the changelog
-- Update the changelog
-- Update the changelog
 - Add UR4 mainboard firmware dumps
-- Update the changelog
-- Update the changelog
-- Update the changelog
-- Update the changelog
-- Update the changelog
-- Update the changelog
-- Update the changelog
 - Bump release-drafter to 7.9.0
-- Update the changelog
 
 ## [0.2.0] - 2026-10-04
 
@@ -130,7 +134,7 @@ Before 1.0, breaking changes ship as minor bumps.
 - Add the fake reader and the test suite
 - Remove vendor demo archives and protocol pdf from the repository
 
-[Unreleased]: https://github.com/DaanVervacke/chainway-serial/compare/v0.2.0...HEAD
+[0.2.2]: https://github.com/DaanVervacke/chainway-serial/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/DaanVervacke/chainway-serial/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/DaanVervacke/chainway-serial/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/DaanVervacke/chainway-serial/releases/tag/v0.1.0
