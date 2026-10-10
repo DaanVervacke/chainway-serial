@@ -1,5 +1,5 @@
 [build-system]
-requires = ["uv_build>=0.12.21,<0.13"]
+requires = ["uv_build>=0.12.21,<0.14"]
 build-backend = "uv_build"
 
 [project]
@@ -55,7 +55,7 @@ Changelog = "https://github.com/DaanVervacke/chainway-serial/blob/main/CHANGELOG
 Documentation = "https://chainway-serial.readthedocs.io/"
 
 [tool.uv]
-required-version = ">=0.12.21,<0.13"
+required-version = ">=0.12.21,<0.14"
 
 [tool.uv.build-backend]
 source-include = ["LICENSE"]
